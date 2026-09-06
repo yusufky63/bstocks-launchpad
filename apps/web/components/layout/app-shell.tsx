@@ -33,6 +33,7 @@ const FOOTER_LINKS = [
   ['/stats', 'Stats', false],
   ['/how-it-works', 'How it works', false],
   ['/docs', 'Docs', false],
+  ['https://basestocks.finance', 'BaseStocks', true],
   ['https://www.base.org/stocks', 'Tokenized stocks on Base', true],
   ['https://basescan.org', 'BaseScan', true],
 ] as const;
@@ -55,7 +56,7 @@ export function AppShell({ children, initialMarkets }: { children: ReactNode; in
         <TopTicker initialMarkets={initialMarkets} />
         <header className="border-b border-line bg-canvas/95 backdrop-blur-[2px]">
           <div className="mx-auto flex h-14 max-w-[1320px] items-center justify-between gap-2 md:gap-3 px-4 md:px-6">
-            <Link href="/" aria-label="StockPair home" className="inline-flex shrink-0">
+            <Link href="/" aria-label="BaseStocks Launchpad home" className="inline-flex shrink-0">
               <Wordmark />
             </Link>
             <nav aria-label="Primary" className="hidden md:flex items-center gap-0 lg:gap-0.5 min-w-0">
@@ -118,11 +119,15 @@ export function AppShell({ children, initialMarkets }: { children: ReactNode; in
             </nav>
           </div>
           <p className="text-[12px] text-ink-muted leading-relaxed max-w-[110ch]">
-            Every token launched here has a fixed 1,000,000,000 supply, no admin, and a Uniswap v4 pool against a Coinbase tokenized stock whose liquidity can never be removed. Swap fees are 1%, paid in the stock: 70% to the creator, 30% to the platform. StockPair is an independent interface on Base, not a Base or Coinbase product.
+            Every token launched here has a fixed 1,000,000,000 supply, no admin, and a Uniswap v4 pool against a Coinbase tokenized stock whose liquidity can never be removed. Swap fees are 1%, paid in the stock: 70% to the creator, 30% to the platform. The launchpad is part of{' '}
+            <a href="https://basestocks.finance" target="_blank" rel="noreferrer noopener" className="text-ink-secondary hover:text-primary transition-fast underline underline-offset-2">
+              BaseStocks
+            </a>
+            , an independent interface on Base — not a Base or Coinbase product. The contracts it runs on are onchain and ownerless.
           </p>
           <svg viewBox="0 84 1200 138" aria-hidden className="footer-wordmark mt-4 -mb-4 w-full h-auto select-none" role="presentation">
             <text x="0" y="286" textLength="1200" lengthAdjust="spacing" fontFamily="var(--font-display), 'Space Grotesk', system-ui, sans-serif" fontWeight="700" fontSize="288" letterSpacing="-8.6">
-              {'STOCKPAIR'.split('').map((ch, i) => (
+              {'BSTOCKS'.split('').map((ch, i) => (
                 <tspan key={i}>{ch}</tspan>
               ))}
             </text>

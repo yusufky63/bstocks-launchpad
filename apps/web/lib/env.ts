@@ -2,7 +2,7 @@ import { readDeployment, type StockPairDeployment } from '@stockpair/core';
 
 /** Browser-safe configuration derived from NEXT_PUBLIC_* variables at build time. */
 export const publicEnv = {
-  appUrl: process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000',
+  appUrl: process.env.NEXT_PUBLIC_APP_URL ?? (process.env.NODE_ENV === 'production' ? 'https://launchpad.basestocks.finance' : 'http://localhost:3000'),
   ipfsGateway: (process.env.NEXT_PUBLIC_IPFS_GATEWAY ?? 'https://gateway.pinata.cloud').replace(/\/$/u, ''),
   deployment: readDeployment(
     {
@@ -20,7 +20,7 @@ export const publicEnv = {
 
 export function requireDeployment(): StockPairDeployment {
   if (!publicEnv.deployment) {
-    throw new Error('StockPair contracts are not configured (NEXT_PUBLIC_STOCKPAIR_*).');
+    throw new Error('Launchpad contracts are not configured (NEXT_PUBLIC_STOCKPAIR_*).');
   }
   return publicEnv.deployment;
 }

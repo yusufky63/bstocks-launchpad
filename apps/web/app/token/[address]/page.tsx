@@ -21,7 +21,10 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const token = parseAddressParam(address);
   if (!token) return { title: 'Token' };
   const market = await readMarketCached(await getDb(), token);
-  return { title: market ? `${market.name} (${market.symbol}) / ${market.stock.symbol}` : 'Token' };
+  if (!market) return { title: 'Token' };
+  const title = `${market.name} (${market.symbol}) / ${market.stock.symbol}`;
+  const description = `${market.name} trades against ${market.stock.ticker} on the BaseStocks launchpad: fixed supply, locked liquidity, fees paid in the stock.`;
+  return { title, description, openGraph: { title, description } };
 }
 
 export default async function TokenPage({ params, searchParams }: Props) {

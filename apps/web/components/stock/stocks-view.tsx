@@ -13,7 +13,8 @@ import { StockTile } from './stock-coin';
 
 export function StocksView({ initialStocks }: { initialStocks: StocksResponse }) {
   const { data } = useStocks(initialStocks);
-  const stocks = data?.stocks ?? [];
+  // Issued stocks first; the ones Coinbase has not minted yet sink to the end.
+  const stocks = [...(data?.stocks ?? [])].sort((a, b) => Number(b.enabled) - Number(a.enabled));
   const live = stocks.filter((s) => s.feedStatus === 'live').length;
   const launches = stocks.reduce((sum, s) => sum + s.launches, 0);
   return (
@@ -21,19 +22,20 @@ export function StocksView({ initialStocks }: { initialStocks: StocksResponse })
       <PageTitle
         index="03 — Stocks"
         title="Quote stocks"
-        lead="Coinbase-issued B20 tokens on Base, each backed 1:1 by shares and priced by a Chainlink feed that updates during US trading hours and holds the last close in between. Every token on StockPair trades against one of these."
+        lead="Coinbase-issued B20 tokens on Base, each backed 1:1 by shares and priced by a Chainlink feed that updates during US trading hours and holds the last close in between. Every token launched here trades against one of these."
       />
       <StatStrip
         cells={[
           { label: 'Stocks', value: String(stocks.length) },
           { label: 'Open for launches', value: `${stocks.filter((s) => s.enabled).length} / ${stocks.length}` },
           { label: 'Tokens paired', value: String(launches) },
-          { label: 'Decimals', value: '8' },
+          { label: 'Feeds live now', value: `${live} / ${stocks.length}` },
         ]}
       />
-      <ul className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-px bg-line border border-line rounded-[8px] overflow-hidden ticks">
+      <div className="border border-line rounded-[8px] overflow-hidden ticks bg-canvas">
+        <ul className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 -mr-px -mb-px">
         {stocks.map((s) => (
-          <li key={s.address} className="bg-canvas relative">
+          <li key={s.address} className="bg-canvas relative border-r border-b border-line">
             {s.enabled && (
               <a
                 href={`https://basestocks.finance/stocks/${s.address}`}
@@ -74,9 +76,10 @@ export function StocksView({ initialStocks }: { initialStocks: StocksResponse })
             </Link>
           </li>
         ))}
-      </ul>
+        </ul>
+      </div>
       <p className="text-[12px] text-ink-muted">
-        Addresses and feeds are read from the StockPair factory on Base. Coinbase tokenized stocks are available only to eligible persons outside the United States; see{' '}
+        Addresses and feeds are read from the launchpad's factory on Base. Coinbase tokenized stocks are available only to eligible persons outside the United States; see{' '}
         <a href="https://www.base.org/stocks" target="_blank" rel="noreferrer noopener" className="text-primary">
           base.org/stocks
         </a>

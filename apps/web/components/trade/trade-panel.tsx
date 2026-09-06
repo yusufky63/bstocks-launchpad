@@ -149,7 +149,19 @@ export function TradePanel({ market, initialSide = 'buy', onTraded, className }:
           <span className="font-mono num">{balance === null ? '—' : `${formatAmount(balance, inputDecimals, buy ? 6 : 2)} ${inputSymbol}`}</span>
         </div>
         {amountText && amountIn === null && <p className="text-[12px] text-danger-fg">Enter a valid amount with at most {inputDecimals} decimals.</p>}
-        {insufficient && <p className="text-[12px] text-danger-fg">Not enough {inputSymbol}.</p>}
+        {insufficient && (
+          <p className="text-[12px] text-danger-fg">
+            Not enough {inputSymbol}.
+            {buy && (
+              <>
+                {' '}
+                <a href={`https://basestocks.finance/stocks/${market.stock.address}`} target="_blank" rel="noreferrer noopener" className="text-primary font-medium">
+                  Buy {market.stock.symbol} on BaseStocks →
+                </a>
+              </>
+            )}
+          </p>
+        )}
         {buy && onBase && stockBalance === 0n && (
           <p className="text-[12px] text-ink-muted border border-dashed border-line rounded-[6px] px-3 py-2">
             You need {market.stock.symbol} to buy. Get it on{' '}

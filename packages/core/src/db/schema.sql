@@ -94,6 +94,8 @@ CREATE TABLE IF NOT EXISTS swaps (
   PRIMARY KEY (tx_hash, log_index)
 );
 CREATE INDEX IF NOT EXISTS swaps_token_time_idx ON swaps (token, block_time DESC);
+-- Serves the trades list and its keyset pagination: token filter, newest first, stable tiebreak.
+CREATE INDEX IF NOT EXISTS swaps_token_block_idx ON swaps (token, block_number DESC, log_index DESC);
 CREATE INDEX IF NOT EXISTS swaps_trader_idx ON swaps (trader, block_time DESC);
 CREATE INDEX IF NOT EXISTS swaps_block_idx ON swaps (block_number);
 

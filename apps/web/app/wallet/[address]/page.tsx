@@ -69,7 +69,7 @@ export default async function WalletPage({ params }: Props) {
           <Module>
             <ModuleHeader index="02" title={`Holdings · ${summary.holdings.length}`} action={<span className="font-mono text-[11px] text-ink-muted">{formatUsd(summary.holdingsUsd)}</span>} />
             {summary.holdings.length === 0 ? (
-              <Empty>No StockPair token balances indexed for this wallet.</Empty>
+              <Empty>No launchpad token balances indexed for this wallet.</Empty>
             ) : (
               summary.holdings.map((h) => (
                 <Link key={h.token} href={`/token/${h.token}`} className="rail flex items-center justify-between gap-3 px-4 py-3 border-b border-line last:border-b-0 hover:bg-surface transition-fast">

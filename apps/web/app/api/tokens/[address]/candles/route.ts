@@ -24,7 +24,7 @@ export async function GET(request: Request, { params }: Context): Promise<Respon
 
   const db = await getDb();
   const market = await readMarket(db, token);
-  if (!market) return error(404, 'TOKEN_NOT_FOUND', 'No StockPair launch exists for this address.');
+  if (!market) return error(404, 'TOKEN_NOT_FOUND', 'No token was launched at this address.');
   const rows = await listCandles(db, token, parsed.data);
   const stockUnit = 10 ** Number(market.stock_decimals);
   return json({

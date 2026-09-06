@@ -17,7 +17,7 @@ export function StatsView({ initialStats, initialActivity }: { initialStats: Sta
     <div className="flex flex-col gap-5">
       <PageTitle
         index="06 — Stats & activity"
-        title="StockPair so far"
+        title="The launchpad so far"
         lead={
           <span className="inline-flex items-center gap-2 flex-wrap">
             <span className="live-dot" /> Every figure is counted from confirmed Base events · updated <TimeAgo value={s.asOf} placeholder="just now" />

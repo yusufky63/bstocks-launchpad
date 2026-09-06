@@ -13,7 +13,7 @@ type Timeframe = 1 | 5 | 15 | 60 | 240;
 type ChartStyle = 'line' | 'candles';
 type ChartSource = 'native' | 'dexscreener';
 const SOURCES: Array<{ value: ChartSource; label: string }> = [
-  { value: 'native', label: 'StockPair' },
+  { value: 'native', label: 'Launchpad' },
   { value: 'dexscreener', label: 'DexScreener' },
 ];
 

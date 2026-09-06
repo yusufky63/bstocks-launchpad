@@ -12,6 +12,7 @@ type Context = { params: Promise<{ address: string }> };
 const querySchema = z.object({
   limit: limitSchema,
   before: z.coerce.bigint().optional(),
+  beforeLog: z.coerce.number().int().min(0).optional(),
 });
 
 export async function GET(request: Request, { params }: Context): Promise<Response> {
@@ -23,11 +24,12 @@ export async function GET(request: Request, { params }: Context): Promise<Respon
 
   const db = await getDb();
   const market = await readMarket(db, token);
-  if (!market) return error(404, 'TOKEN_NOT_FOUND', 'No StockPair launch exists for this address.');
+  if (!market) return error(404, 'TOKEN_NOT_FOUND', 'No token was launched at this address.');
   const rows = await listSwaps(db, {
     token,
     limit: parsed.data.limit,
     ...(parsed.data.before !== undefined ? { beforeBlock: parsed.data.before } : {}),
+    ...(parsed.data.beforeLog !== undefined ? { beforeLogIndex: parsed.data.beforeLog } : {}),
   });
   const stockUsd = market.stock_usd8 === null ? null : Number(market.stock_usd8) / 1e8;
   const stockUnit = 10 ** Number(market.stock_decimals);

@@ -27,7 +27,7 @@ export async function GET(_request: Request, { params }: Context): Promise<Respo
   }
 
   const onchain = await cached(`onchain:${token}`, TTL.chain, () => readLaunchOnchain(token));
-  if (!onchain) return error(404, 'TOKEN_NOT_FOUND', 'No StockPair launch exists for this address.');
+  if (!onchain) return error(404, 'TOKEN_NOT_FOUND', 'No token was launched at this address.');
   const stock = findStock(onchain.stock);
   return json({ status: 'indexing', launch: { ...onchain, stockSymbol: stock?.symbol ?? null, stockTicker: stock?.ticker ?? null } });
 }

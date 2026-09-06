@@ -35,7 +35,7 @@ export default function DocsPage() {
   const d = publicEnv.deployment;
   return (
     <div className="flex flex-col gap-6">
-      <PageTitle index="08 — Docs" title="Technical reference" lead="Contracts, math, indexer, API and the security model of StockPair. Everything below is enforced by code that is deployed on Base; nothing depends on a server behaving well." action={<LinkButton href="/how-it-works">Plain-words version</LinkButton>} />
+      <PageTitle index="08 — Docs" title="Technical reference" lead="Contracts, math, indexer, API and the security model of the launchpad. Everything below is enforced by code that is deployed on Base; nothing depends on a server behaving well." action={<LinkButton href="/how-it-works">Plain-words version</LinkButton>} />
 
       <div className="grid grid-cols-1 lg:grid-cols-[220px_minmax(0,1fr)] gap-5 items-start">
         <nav aria-label="Docs sections" className="lg:sticky lg:top-[72px] border border-line rounded-[8px] bg-canvas p-2 flex flex-wrap lg:flex-col gap-0.5">
@@ -50,7 +50,7 @@ export default function DocsPage() {
         <div className="flex flex-col gap-5 min-w-0">
           <Section id="architecture" index="01" title="Architecture">
             <p>
-              StockPair has four parts. <strong>Contracts</strong> on Base (a factory, a Uniswap v4 hook and a small router) hold every rule that matters: supply, liquidity, fees and who may claim them. An <strong>indexer</strong> follows Base, waits for confirmations and stores confirmed launches, swaps, transfers and fee events. The <strong>web app</strong> renders pages and a public JSON API from those rows and talks to the chain only for quotes and live pool state. A shared <strong>core</strong> library holds the stock registry, the price math and the event decoders used by both.
+              The launchpad has four parts. <strong>Contracts</strong> on Base (a factory, a Uniswap v4 hook and a small router) hold every rule that matters: supply, liquidity, fees and who may claim them. An <strong>indexer</strong> follows Base, waits for confirmations and stores confirmed launches, swaps, transfers and fee events. The <strong>web app</strong> renders pages and a public JSON API from those rows and talks to the chain only for quotes and live pool state. A shared <strong>core</strong> library holds the stock registry, the price math and the event decoders used by both.
             </p>
             <p>
               The web app never writes to the database and never trusts client input for anything that is displayed. What you see is either a confirmed event, a number derived from confirmed events, or a live <code>eth_call</code>.

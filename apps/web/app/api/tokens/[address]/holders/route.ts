@@ -16,12 +16,12 @@ export async function GET(request: Request, { params }: Context): Promise<Respon
   const { address } = await params;
   const token = parseAddressParam(address);
   if (!token) return error(400, 'INVALID_ADDRESS', 'Token address is malformed.');
-  const parsed = z.object({ limit: limitSchema }).safeParse(Object.fromEntries(new URL(request.url).searchParams));
+  const parsed = z.object({ limit: z.coerce.number().int().min(1).max(500).default(100) }).safeParse(Object.fromEntries(new URL(request.url).searchParams));
   if (!parsed.success) return error(400, 'INVALID_QUERY', 'Unsupported query parameters.');
 
   const db = await getDb();
   const market = await readMarket(db, token);
-  if (!market) return error(404, 'TOKEN_NOT_FOUND', 'No StockPair launch exists for this address.');
+  if (!market) return error(404, 'TOKEN_NOT_FOUND', 'No token was launched at this address.');
   const poolManager = BASE_CONTRACTS.poolManager.toLowerCase();
   const [rows, conc] = await Promise.all([listHolders(db, token, parsed.data.limit), holderConcentration(db, token, poolManager)]);
   const pct = (raw: string, of: bigint) => (of === 0n ? 0 : Number((BigInt(raw) * 1_000_000n) / of) / 10_000);

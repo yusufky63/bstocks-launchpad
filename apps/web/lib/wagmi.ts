@@ -13,17 +13,17 @@ export function getWagmiConfig() {
   const alchemyRpc = publicEnv.alchemyKey ? `https://base-mainnet.g.alchemy.com/v2/${publicEnv.alchemyKey}` : null;
   // Base Account (passkey, works on mobile web), any injected extension, and — when a WalletConnect
   // project id is set — QR / deep-link into a mobile wallet like MetaMask, Trust or Rainbow.
-  const connectors: CreateConnectorFn[] = [baseAccount({ appName: 'StockPair' }), injected()];
+  const connectors: CreateConnectorFn[] = [baseAccount({ appName: 'BaseStocks Launchpad' }), injected()];
   if (publicEnv.walletConnectId) {
     connectors.push(
       walletConnect({
         projectId: publicEnv.walletConnectId,
         showQrModal: true,
         metadata: {
-          name: 'StockPair',
+          name: 'BaseStocks Launchpad',
           description: 'Launch a token on Base that trades against a Coinbase tokenized stock.',
           url: publicEnv.appUrl,
-          icons: [`${publicEnv.appUrl}/icon.png`],
+          icons: [`${publicEnv.appUrl}/icon.svg`],
         },
       }),
     );

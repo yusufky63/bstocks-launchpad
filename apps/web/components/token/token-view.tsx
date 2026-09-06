@@ -106,18 +106,6 @@ export function TokenView({ address, initialData }: { address: string; initialDa
 
   return (
     <div className="flex flex-col gap-5">
-      <StatStrip
-        columns="grid-cols-2 md:grid-cols-3 lg:grid-cols-6"
-        cells={[
-          { label: 'FDV', value: formatUsd(market.fdvUsd, { compact: true }) },
-          { label: 'Liquidity', value: details?.pool ? formatUsd(details.pool.stockReserveUsd, { compact: true }) : '—' },
-          { label: 'Volume · 24h', value: market.volume24hStock > 0 ? formatUsd(market.volume24hUsd, { compact: true }) : '—' },
-          { label: 'Volume · all', value: details ? formatUsd(details.lifetime.volumeUsd, { compact: true }) : '—' },
-          { label: 'Holders', value: formatNumber(market.holders, 0) },
-          { label: 'Trades · all', value: details ? formatNumber(details.lifetime.trades, 0) : formatNumber(market.trades24h, 0) },
-        ]}
-      />
-
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_380px] gap-5 items-start">
         <div className="flex flex-col gap-5 min-w-0">
           <Module ticks>
@@ -163,13 +151,23 @@ export function TokenView({ address, initialData }: { address: string; initialDa
                 )}
               </span>
             </div>
+            <StatStrip
+              columns="grid-cols-2 md:grid-cols-4"
+              className="rounded-none border-x-0 border-b-0"
+              cells={[
+                { label: 'FDV', value: formatUsd(market.fdvUsd, { compact: true }) },
+                { label: 'Liquidity', value: details?.pool ? formatUsd(details.pool.stockReserveUsd, { compact: true }) : '—' },
+                { label: 'Volume · 24h', value: market.volume24hStock > 0 ? formatUsd(market.volume24hUsd, { compact: true }) : '—' },
+                { label: 'Volume · all', value: details ? formatUsd(details.lifetime.volumeUsd, { compact: true }) : '—' },
+              ]}
+            />
             <div className="border-t border-line">
               <ChartModule token={market.token} poolId={market.poolId} stockSymbol={market.stock.symbol} creatorSwaps={creatorSwaps} />
             </div>
           </Module>
 
           <Module>
-            <TokenRecords market={market} links={details?.links} fees={<FeesPanel details={details} market={market} />} />
+            <TokenRecords market={market} links={details?.links} trades={details?.lifetime.trades} fees={<FeesPanel details={details} market={market} />} />
           </Module>
         </div>
 
@@ -218,9 +216,8 @@ export function TokenView({ address, initialData }: { address: string; initialDa
 
 function IconLink({ href, label, icon }: { href: string; label: string; icon: React.ReactNode }) {
   return (
-    <a href={href} target="_blank" rel="noreferrer noopener" title={label} className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-[6px] border border-line text-[12px] text-ink-secondary hover:text-ink hover:border-line-strong transition-fast">
+    <a href={href} target="_blank" rel="noreferrer noopener" title={label} aria-label={label} className="inline-flex items-center justify-center h-8 w-8 rounded-[6px] border border-line text-ink-secondary hover:text-ink hover:border-line-strong transition-fast">
       {icon}
-      <span className="hidden sm:inline">{label}</span>
     </a>
   );
 }

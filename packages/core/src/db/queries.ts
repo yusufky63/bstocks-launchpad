@@ -494,9 +494,11 @@ const MARKET_SELECT = `
     WHERE swaps.token = l.token ORDER BY block_number DESC, log_index DESC LIMIT 1
   ) last ON true
   LEFT JOIN LATERAL (
+    -- Ordered by block_time so the (token, block_time DESC) index serves this without a sort;
+    -- block_time and block_number are monotonic together, so the row picked is the same.
     SELECT price_token_in_stock FROM swaps
     WHERE swaps.token = l.token AND block_time <= now() - interval '24 hours'
-    ORDER BY block_number DESC, log_index DESC LIMIT 1
+    ORDER BY block_time DESC, log_index DESC LIMIT 1
   ) ago ON true
   LEFT JOIN LATERAL (
     SELECT sum(amount_stock_raw) AS volume_stock_raw, count(*) AS trades FROM swaps
@@ -553,7 +555,7 @@ export async function readMarket(db: Db, token: string): Promise<MarketRow | nul
 
 export async function listSwaps(
   db: Db,
-  options: { token?: string; trader?: string; limit?: number; beforeBlock?: bigint } = {},
+  options: { token?: string; trader?: string; limit?: number; beforeBlock?: bigint; beforeLogIndex?: number } = {},
 ): Promise<SwapRow[]> {
   const clauses: string[] = [];
   const params: unknown[] = [];
@@ -566,8 +568,14 @@ export async function listSwaps(
     clauses.push(`s.trader = $${params.length}`);
   }
   if (options.beforeBlock !== undefined) {
-    params.push(options.beforeBlock.toString());
-    clauses.push(`s.block_number < $${params.length}`);
+    if (options.beforeLogIndex !== undefined) {
+      // Keyset cursor: strictly older than the (block, log) pair, so same-block swaps are not skipped.
+      params.push(options.beforeBlock.toString(), options.beforeLogIndex);
+      clauses.push(`(s.block_number, s.log_index) < ($${params.length - 1}, $${params.length})`);
+    } else {
+      params.push(options.beforeBlock.toString());
+      clauses.push(`s.block_number < $${params.length}`);
+    }
   }
   params.push(Math.min(Math.max(options.limit ?? 50, 1), 200));
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';

@@ -1,14 +1,14 @@
 'use client';
 
 import Link from 'next/link';
-import { useState, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 
 import { Tabs } from '@/components/ui/controls';
 import { AddressLabel, Named, TimeAgo, TxLink } from '@/components/ui/display';
 import { Empty, KeyValue, Skeleton, cx } from '@/components/ui/primitives';
 import { formatDateTime, formatNumber, formatPct, formatRatio, formatUsd, shortAddress } from '@/lib/format';
-import { useHolders, useSwaps } from '@/lib/queries';
-import type { MarketView, TokenDetails } from '@/lib/types';
+import { apiGet, useHolders, useSwaps } from '@/lib/queries';
+import type { MarketView, SwapView, SwapsResponse, TokenDetails } from '@/lib/types';
 import { ExternalLink } from 'lucide-react';
 
 type Tab = 'trades' | 'holders' | 'fees' | 'details';
@@ -22,10 +22,39 @@ function DevTag() {
   );
 }
 
-export function TokenRecords({ market, links, fees }: { market: MarketView; links?: TokenDetails['links']; fees?: ReactNode }) {
+const PAGE = 100;
+const HOLDERS_MAX = 500;
+
+export function TokenRecords({ market, links, fees, trades }: { market: MarketView; links?: TokenDetails['links']; fees?: ReactNode; trades?: number }) {
   const [tab, setTab] = useState<Tab>('trades');
   const swaps = useSwaps(market.token, tab === 'trades');
-  const holders = useHolders(market.token, tab === 'holders');
+  const [holdersLimit, setHoldersLimit] = useState(PAGE);
+  const holders = useHolders(market.token, tab === 'holders', holdersLimit);
+
+  // The first page stays live (the query refetches); older pages are fetched once and appended.
+  const [older, setOlder] = useState<SwapView[]>([]);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [exhausted, setExhausted] = useState(false);
+  const latest = swaps.data?.swaps;
+  const allSwaps = useMemo(() => {
+    const head = latest ?? [];
+    const seen = new Set(head.map((s) => `${s.txHash}:${s.logIndex}`));
+    return [...head, ...older.filter((s) => !seen.has(`${s.txHash}:${s.logIndex}`))];
+  }, [latest, older]);
+
+  const loadMore = async () => {
+    const last = allSwaps[allSwaps.length - 1];
+    if (!last || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const page = await apiGet<SwapsResponse>(`/api/tokens/${market.token}/swaps?limit=${PAGE}&before=${last.blockNumber}&beforeLog=${last.logIndex}`);
+      setOlder((prev) => [...prev, ...page.swaps]);
+      if (page.swaps.length < PAGE) setExhausted(true);
+    } catch {
+      /* button stays; the user can retry */
+    }
+    setLoadingMore(false);
+  };
 
   return (
     <>
@@ -34,7 +63,7 @@ export function TokenRecords({ market, links, fees }: { market: MarketView; link
         value={tab}
         onChange={setTab}
         tabs={[
-          { id: 'trades', label: 'Trades' },
+          { id: 'trades', label: trades === undefined ? 'Trades' : `Trades · ${formatNumber(trades, 0)}` },
           { id: 'holders', label: `Holders · ${formatNumber(market.holders, 0)}` },
           { id: 'fees', label: 'Fees & pool' },
           { id: 'details', label: 'Details' },
@@ -49,16 +78,16 @@ export function TokenRecords({ market, links, fees }: { market: MarketView; link
             <Skeleton className="h-10" />
             <Skeleton className="h-10" />
           </div>
-        ) : (swaps.data?.swaps.length ?? 0) === 0 ? (
+        ) : allSwaps.length === 0 ? (
           <Empty>No trades yet. The first swap shows up here within a few blocks.</Empty>
         ) : (
           <div>
-            {swaps.data!.swaps.some((s) => s.isCreator) && (
+            {allSwaps.some((s) => s.isCreator) && (
               <p className="px-4 py-2 border-b border-line font-mono text-[11px] text-warning-fg">
-                {swaps.data!.swaps.filter((s) => s.isCreator).length} dev {swaps.data!.swaps.filter((s) => s.isCreator).length === 1 ? 'trade' : 'trades'} by the creator, of the last {swaps.data!.swaps.length}
+                {allSwaps.filter((s) => s.isCreator).length} dev {allSwaps.filter((s) => s.isCreator).length === 1 ? 'trade' : 'trades'} by the creator, of the last {allSwaps.length}
               </p>
             )}
-            {swaps.data!.swaps.map((s) => (
+            {allSwaps.map((s) => (
               <div key={`${s.txHash}:${s.logIndex}`} className="rail flex items-center gap-3 px-4 py-2.5 border-b border-line last:border-b-0 hover:bg-surface transition-fast">
                 <span className="shrink-0 flex flex-col items-start gap-0.5 w-11">
                   <span className={cx('font-medium text-[13px]', s.side === 'buy' ? 'text-positive-fg' : 'text-danger-fg')}>{s.side === 'buy' ? 'Buy' : 'Sell'}</span>
@@ -89,6 +118,11 @@ export function TokenRecords({ market, links, fees }: { market: MarketView; link
                 </TxLink>
               </div>
             ))}
+            {!exhausted && allSwaps.length >= PAGE && (
+              <button type="button" disabled={loadingMore} onClick={() => void loadMore()} className="w-full h-10 border-t border-line text-[13px] font-medium text-primary hover:bg-surface transition-fast disabled:opacity-50">
+                {loadingMore ? 'Loading…' : 'Load older trades'}
+              </button>
+            )}
           </div>
         ))}
 
@@ -139,6 +173,11 @@ export function TokenRecords({ market, links, fees }: { market: MarketView; link
                 </span>
               </div>
             ))}
+            {(holders.data?.holders.length ?? 0) >= holdersLimit && holdersLimit < HOLDERS_MAX && (
+              <button type="button" disabled={holders.isFetching} onClick={() => setHoldersLimit(HOLDERS_MAX)} className="w-full h-10 border-t border-line text-[13px] font-medium text-primary hover:bg-surface transition-fast disabled:opacity-50">
+                {holders.isFetching ? 'Loading…' : `Show top ${HOLDERS_MAX} holders`}
+              </button>
+            )}
           </div>
         ))}
 

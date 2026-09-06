@@ -33,14 +33,37 @@ const mono = localFont({
   weight: '400',
 });
 
-const APP_URL = (process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000').replace(/\/$/u, '');
+/** Official production origin as the fallback so share links and wallet metadata never point at localhost. */
+const APP_URL = (process.env.NEXT_PUBLIC_APP_URL ?? (process.env.NODE_ENV === 'production' ? 'https://launchpad.basestocks.finance' : 'http://localhost:3000')).replace(/\/$/u, '');
+
+const DESCRIPTION = 'Launch a token on Base that trades against a Coinbase tokenized stock. Fixed supply, permanent Uniswap v4 liquidity, fees paid in the stock.';
 
 export const metadata: Metadata = {
   metadataBase: new URL(APP_URL),
-  title: { default: 'StockPair — Tokens priced in real stocks', template: '%s · StockPair' },
-  description: 'Launch a token on Base that trades against a Coinbase tokenized stock. Fixed supply, permanent Uniswap v4 liquidity, fees paid in the stock.',
-  applicationName: 'StockPair',
+  title: { default: 'BaseStocks Launchpad — Tokens priced in real stocks', template: '%s · BaseStocks Launchpad' },
+  description: DESCRIPTION,
+  applicationName: 'BaseStocks Launchpad',
+  appleWebApp: { capable: true, title: 'Launchpad', statusBarStyle: 'default' },
+  openGraph: {
+    type: 'website',
+    siteName: 'BaseStocks Launchpad',
+    url: '/',
+    locale: 'en_US',
+    title: 'BaseStocks Launchpad — Tokens priced in real stocks',
+    description: DESCRIPTION,
+  },
+  twitter: { card: 'summary_large_image', site: '@BaseOnStocks' },
+  robots: { index: true, follow: true },
 };
+
+/** Structured data for link previews and search: the site, and BaseStocks as the org behind it. */
+const jsonLd = JSON.stringify({
+  '@context': 'https://schema.org',
+  '@graph': [
+    { '@type': 'WebSite', name: 'BaseStocks Launchpad', url: APP_URL, description: DESCRIPTION },
+    { '@type': 'Organization', name: 'BaseStocks', url: 'https://basestocks.finance', sameAs: ['https://x.com/BaseOnStocks'] },
+  ],
+});
 
 export const viewport: Viewport = {
   width: 'device-width',
@@ -60,6 +83,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
   return (
     <html lang="en" suppressHydrationWarning className={`${body.variable} ${display.variable} ${mono.variable} h-full`}>
       <head>
+        <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLd }} />
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>
       <body className="min-h-full flex flex-col bg-canvas text-ink">

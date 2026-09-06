@@ -119,12 +119,13 @@ export function useSwaps(address: string, enabled = true) {
   });
 }
 
-export function useHolders(address: string, enabled = true) {
+export function useHolders(address: string, enabled = true, limit = 100) {
   return useQuery<HoldersResponse, Error>({
-    queryKey: qk.holders(address),
-    queryFn: () => apiGet<HoldersResponse>(`/api/tokens/${address}/holders?limit=100`),
+    queryKey: [...qk.holders(address), limit],
+    queryFn: () => apiGet<HoldersResponse>(`/api/tokens/${address}/holders?limit=${limit}`),
     refetchInterval: 30_000,
     enabled,
+    placeholderData: (prev) => prev,
   });
 }
 

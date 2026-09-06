@@ -2,13 +2,14 @@
 
 import { ArrowUpRight, ChevronDown, ChevronsUpDown, ChevronUp, Search } from 'lucide-react';
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { StockTile, TokenLogo } from '@/components/stock/stock-coin';
+import { Tabs } from '@/components/ui/controls';
 import { AnimatedNumber, PriceChange, TimeAgo } from '@/components/ui/display';
 import { Badge, Chip, Empty, PageTitle, Skeleton, StatStrip, cx } from '@/components/ui/primitives';
 import { formatCompact, formatNumber, formatRatio, formatUsd } from '@/lib/format';
-import { useMarkets, useStocks } from '@/lib/queries';
+import { apiGet, useMarkets, useStocks } from '@/lib/queries';
 import type { MarketView, MarketsResponse, StocksResponse } from '@/lib/types';
 
 import { PairBadge } from './market-rows';
@@ -67,7 +68,40 @@ export function MarketsView({ initialMarkets, initialStocks, initialStock }: { i
   const markets = useMarkets({ stock: stock ?? undefined, q: query }, !stock && !query ? initialMarkets : undefined, { refetchInterval: screen === 'new' ? 3_000 : 5_000, refetchIntervalInBackground: screen === 'new' });
   const { data: stocksData } = useStocks(initialStocks);
   const stocks = stocksData?.stocks ?? [];
-  const all = markets.data?.markets ?? [];
+
+  // The first 100 stay live through the polling query; older pages are fetched once and appended.
+  const [extra, setExtra] = useState<MarketView[]>([]);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [exhausted, setExhausted] = useState(false);
+  const filterKey = `${stock ?? ''}:${query.trim()}`;
+  useEffect(() => {
+    setExtra([]);
+    setExhausted(false);
+  }, [filterKey]);
+  const live = markets.data?.markets;
+  const all = useMemo(() => {
+    const head = live ?? [];
+    const seen = new Set(head.map((m) => m.token));
+    return [...head, ...extra.filter((m) => !seen.has(m.token))];
+  }, [live, extra]);
+
+  const loadMore = async () => {
+    if (loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const search = new URLSearchParams();
+      if (stock) search.set('stock', stock);
+      if (query.trim()) search.set('q', query.trim());
+      search.set('limit', '100');
+      search.set('offset', String(all.length));
+      const page = await apiGet<MarketsResponse>(`/api/markets?${search}`);
+      setExtra((prev) => [...prev, ...page.markets]);
+      if (page.markets.length < 100) setExhausted(true);
+    } catch {
+      /* button stays; the user can retry */
+    }
+    setLoadingMore(false);
+  };
   const fresh = useMemo(() => applyScreen(all, 'new'), [all]);
 
   const rows = useMemo(() => {
@@ -107,23 +141,14 @@ export function MarketsView({ initialMarkets, initialStocks, initialStock }: { i
 
       <MarketStats rows={all} />
 
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-ink-muted mr-1">Screen</span>
-        {SCREENS.map((s) => (
-          <Chip key={s.value} active={screen === s.value} title={s.hint} onClick={() => setScreen(s.value)} className="h-8 min-h-[32px] px-2.5 text-[12px]">
-            {s.label}
-            {s.value === 'new' && fresh.length > 0 && <span className="ml-1 font-mono text-[10px] text-primary">{fresh.length}</span>}
-          </Chip>
-        ))}
-        <span className="w-px h-5 bg-line mx-1 hidden sm:block" aria-hidden />
-        <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-ink-muted mr-1">Stock</span>
-        <Chip active={stock === null} onClick={() => setStock(null)} className="h-8 min-h-[32px] px-2.5 text-[12px]">
-          All
+      <div className="flex items-center gap-2 overflow-x-auto pb-1 -mb-1 [scrollbar-width:none]" role="group" aria-label="Filter by paired stock">
+        <Chip active={stock === null} onClick={() => setStock(null)} className="h-8 min-h-[32px] px-2.5 text-[12px] shrink-0">
+          All stocks
         </Chip>
         {stocks
           .filter((s) => s.launches > 0 || s.address === stock)
           .map((s) => (
-            <Chip key={s.address} active={stock === s.address} onClick={() => setStock(stock === s.address ? null : s.address)} className="h-8 min-h-[32px] pl-1.5 pr-2.5 text-[12px] gap-1.5 inline-flex items-center">
+            <Chip key={s.address} active={stock === s.address} onClick={() => setStock(stock === s.address ? null : s.address)} className="h-8 min-h-[32px] pl-1.5 pr-2.5 text-[12px] gap-1.5 inline-flex items-center shrink-0">
               <StockTile ticker={s.ticker} size={16} className="rounded-[3px] border-0" />
               {s.symbol} <span className="font-mono text-ink-muted">{s.launches}</span>
             </Chip>
@@ -131,6 +156,26 @@ export function MarketsView({ initialMarkets, initialStocks, initialStock }: { i
       </div>
 
       <div className="border border-line rounded-[8px] overflow-hidden bg-canvas ticks">
+        <div className="overflow-x-auto [scrollbar-width:none]">
+          <div className="min-w-[600px]">
+            <Tabs<Screen>
+              ariaLabel="Screen tokens"
+              value={screen}
+              onChange={setScreen}
+              tabs={SCREENS.map((s) => ({
+                id: s.value,
+                label:
+                  s.value === 'new' && fresh.length > 0 ? (
+                    <>
+                      New <span className="ml-1 font-mono text-[10px] text-primary">{fresh.length}</span>
+                    </>
+                  ) : (
+                    s.label
+                  ),
+              }))}
+            />
+          </div>
+        </div>
         <div className={cx('hidden md:grid gap-3 px-4 py-2 border-b border-line font-mono text-[11px] uppercase tracking-[0.12em] text-ink-muted whitespace-nowrap items-center', COLUMNS)}>
           <span>Token</span>
           <span>Pair</span>
@@ -159,6 +204,11 @@ export function MarketsView({ initialMarkets, initialStocks, initialStock }: { i
               Create one →
             </Link>
           </Empty>
+        )}
+        {!exhausted && all.length >= 100 && (
+          <button type="button" disabled={loadingMore} onClick={() => void loadMore()} className="w-full h-11 border-t border-line text-[13px] font-medium text-primary hover:bg-surface transition-fast disabled:opacity-50">
+            {loadingMore ? 'Loading…' : 'Load more tokens'}
+          </button>
         )}
       </div>
       <p className="text-[12px] text-ink-muted">
