@@ -17,7 +17,7 @@ async function main(): Promise<void> {
   loadEnvFiles();
   const config = loadConfig();
   const db = await createPostgresDb(config.databaseUrl, { max: 3 });
-  await migrate(db);
+  await migrate(db, log);
   const chain = createChainReader(config.rpcUrls);
 
   const state = {

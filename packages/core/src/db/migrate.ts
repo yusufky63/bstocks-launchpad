@@ -12,9 +12,42 @@ async function schemaSql(): Promise<string> {
   return readFile(join(here, 'schema.sql'), 'utf8');
 }
 
-/** Applies the schema (idempotent) and seeds the stock registry. */
-export async function migrate(db: Db): Promise<void> {
-  await db.exec(await schemaSql());
+/**
+ * Splits the one-line `CREATE INDEX` statements out of the schema. Tables and constraints are
+ * essential and must apply; indexes are optimisations that are applied separately so a slow or
+ * lock-blocked index can never stop the process from starting.
+ */
+function splitIndexes(sql: string): { core: string; indexes: string[] } {
+  const core: string[] = [];
+  const indexes: string[] = [];
+  for (const line of sql.split(/\r?\n/u)) {
+    const isIndex = /^\s*CREATE\s+(?:UNIQUE\s+)?INDEX\b/iu.test(line) && line.trimEnd().endsWith(';');
+    (isIndex ? indexes : core).push(isIndex ? line.trim() : line);
+  }
+  return { core: core.join('\n'), indexes };
+}
+
+type Log = (message: string, fields?: Record<string, unknown>) => void;
+
+/**
+ * Applies the schema (idempotent) and seeds the stock registry.
+ *
+ * An index that cannot be built right now — a statement timeout, or a lock still held by a process
+ * that was killed mid-write — is logged and skipped rather than thrown. Without an index the
+ * queries it serves fall back to a sort; with a throw here the indexer would crash-loop and stop
+ * following the chain, which is far worse. The next start retries it.
+ */
+export async function migrate(db: Db, log: Log = () => undefined): Promise<void> {
+  const { core, indexes } = splitIndexes(await schemaSql());
+  await db.exec(core);
+  for (const statement of indexes) {
+    try {
+      // The timeout rides in the same simple-query batch so it lands on this statement's connection.
+      await db.exec(`SET statement_timeout = '120s';\n${statement}`);
+    } catch (error) {
+      log('index skipped', { statement, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
   await db.query(
     'INSERT INTO schema_version (version) VALUES ($1) ON CONFLICT (version) DO NOTHING',
     [SCHEMA_VERSION],
