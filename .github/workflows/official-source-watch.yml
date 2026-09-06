@@ -1,0 +1,67 @@
+name: Official source watch
+
+on:
+  schedule:
+    - cron: '17 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: official-source-watch
+  cancel-in-progress: false
+
+jobs:
+  snapshot-diff:
+    name: Daily no-auto-apply raw and semantic diff
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Use Node.js 24.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+
+      - name: Pin pnpm 11.16.0
+        shell: bash
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.16.0 --activate
+          test "$(pnpm --version)" = "11.16.0"
+
+      - name: Frozen workspace install
+        run: pnpm install --frozen-lockfile
+
+      - name: Capture upstream proposal
+        id: upstream
+        shell: bash
+        run: |
+          set +e
+          pnpm --filter @base-signal/official-sources check:upstream > official-source-diff.json
+          status=$?
+          set -e
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          test "$status" -le 2
+
+      - name: Upload immutable run evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: official-source-diff-${{ github.run_id }}
+          path: official-source-diff.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Fail closed on drift, semantic mismatch, or fetch failure
+        if: steps.upstream.outputs.status != '0'
+        shell: bash
+        run: |
+          echo "Official source drift, semantic mismatch/unverifiable fact, or fetch failure requires manual review. Mismatch/unverifiable and fetch-failure cases keep affected writes closed; no manifest value was changed."
+          exit 1

@@ -1,0 +1,30 @@
+{
+  "name": "@stockpair/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./abi": "./src/abi/stockpair.ts",
+    "./db": "./src/db/index.ts",
+    "./server": "./src/server.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "db:migrate": "tsx src/db/cli.ts migrate",
+    "db:reset": "tsx src/db/cli.ts reset"
+  },
+  "dependencies": {
+    "postgres": "^3.4.9",
+    "viem": "^2.56.3",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
+    "@types/node": "^24.5.2",
+    "tsx": "^4.23.13",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
+  }
+}

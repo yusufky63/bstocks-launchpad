@@ -1,0 +1,140 @@
+name: E1 verification
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e1-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify-e1:
+    name: Node 24 / pnpm 11 / Foundry
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CI: 'true'
+      NEXT_PUBLIC_CHAIN_ID: '8453'
+      DISABLE_NEW_LAUNCHES: 'true'
+      DISABLE_B20_CREATE: 'true'
+      DISABLE_ERC20_CREATE: 'true'
+      DISABLE_LIQUIDITY_UI: 'true'
+      DISABLE_TRADE_UI: 'true'
+      DISABLE_LP_COLLECT_UI: 'true'
+      DISABLE_UPLOADS: 'true'
+      AI_READ_ONLY: 'true'
+      DISABLE_PAYMASTER: 'true'
+      FREEZE_POINTS: 'true'
+      ENABLE_B20: 'false'
+      ENABLE_ERC20: 'false'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Prepare safe E1 evidence
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          mkdir -p artifacts/e1
+          printf 'workflow=%s\nrun_id=%s\nrun_attempt=%s\ncommit_sha=%s\n' \
+            "$GITHUB_WORKFLOW" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_SHA" \
+            > artifacts/e1/run-context.txt
+
+      - name: Use Node.js 24.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+
+      - name: Pin pnpm 11.16.0
+        shell: bash
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.16.0 --activate
+          test "$(pnpm --version)" = "11.16.0"
+
+      - name: Frozen workspace install
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.7.1
+
+      - name: Verify E1 workspace
+        shell: bash
+        run: |
+          set -o pipefail
+          pnpm verify:e1 2>&1 | tee artifacts/e1/verify-e1.log
+
+      - name: Run explicit Forge suite
+        shell: bash
+        run: |
+          set -o pipefail
+          forge test --root packages/contracts 2>&1 | tee artifacts/e1/forge-test.log
+
+      - name: Verify production HTTP contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          web_log='artifacts/e1/web-production.log'
+          pnpm --filter @base-signal/web start --hostname 127.0.0.1 --port 3012 > "$web_log" 2>&1 &
+          web_pid=$!
+          cleanup() {
+            kill "$web_pid" 2>/dev/null || true
+            wait "$web_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          ready=false
+          for attempt in {1..30}; do
+            if curl --silent --fail --output /dev/null http://127.0.0.1:3012/api/health; then
+              ready=true
+              break
+            fi
+            if ! kill -0 "$web_pid" 2>/dev/null; then
+              printf 'Production web process exited before readiness.\n' >&2
+              exit 1
+            fi
+            sleep 1
+          done
+          if [[ "$ready" != 'true' ]]; then
+            printf 'Production web process did not become ready within 30 seconds.\n' >&2
+            exit 1
+          fi
+
+          WEB_SMOKE_BASE_URL='http://127.0.0.1:3012' \
+            WEB_SMOKE_MODE='production' \
+            pnpm verify:web-smoke 2>&1 | tee artifacts/e1/web-smoke.log
+
+      - name: Collect allowlisted build evidence
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          if [[ -f apps/web/.next/server/app-paths-manifest.json ]]; then
+            cp apps/web/.next/server/app-paths-manifest.json artifacts/e1/app-paths-manifest.json
+          fi
+          if [[ -f apps/web/.next/routes-manifest.json ]]; then
+            cp apps/web/.next/routes-manifest.json artifacts/e1/routes-manifest.json
+          fi
+          if compgen -G 'artifacts/e1/*manifest.json' > /dev/null; then
+            sha256sum artifacts/e1/*manifest.json > artifacts/e1/manifest-sha256.txt
+          fi
+
+      - name: Upload E1 verification evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: e1-verification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/e1/
+          if-no-files-found: error
+          retention-days: 14

@@ -1,0 +1,36 @@
+node_modules/
+.pnpm-store/
+.next/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Scratch and tooling
+scratch/
+.codex-tmp/
+.codex-references/
+.artifacts/
+.agents/
+.playwright-cli/
+prototypes/
+apps/web/.data/
+
+# Editors and OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Foundry
+packages/contracts/cache/
+packages/contracts/out/
+packages/contracts/broadcast/
+packages/contracts/lib/
+.claude/

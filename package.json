@@ -1,0 +1,26 @@
+{
+  "name": "stockpair",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Stock-paired B20 token launcher on Base: every new token trades against a Coinbase tokenized stock in a permanently locked Uniswap v4 pool.",
+  "packageManager": "pnpm@9.15.4",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "pnpm -r --if-present build",
+    "dev": "pnpm --filter @stockpair/web dev",
+    "dev:indexer": "pnpm --filter @stockpair/indexer dev",
+    "test": "pnpm -r --if-present test",
+    "test:contracts": "cd packages/contracts && forge test -vv",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "db:migrate": "pnpm --filter @stockpair/core db:migrate",
+    "db:reset": "pnpm --filter @stockpair/core db:reset"
+  },
+  "devDependencies": {
+    "@types/node": "^24.5.2",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
+  }
+}
