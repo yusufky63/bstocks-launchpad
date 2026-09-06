@@ -5,13 +5,22 @@ import { useState, type ReactNode } from 'react';
 
 import { Tabs } from '@/components/ui/controls';
 import { AddressLabel, TimeAgo, TxLink } from '@/components/ui/display';
-import { Badge, Empty, KeyValue, Skeleton, cx } from '@/components/ui/primitives';
+import { Empty, KeyValue, Skeleton, cx } from '@/components/ui/primitives';
 import { formatDateTime, formatNumber, formatPct, formatRatio, formatUsd, shortAddress } from '@/lib/format';
 import { useHolders, useSwaps } from '@/lib/queries';
 import type { MarketView, TokenDetails } from '@/lib/types';
 import { ExternalLink } from 'lucide-react';
 
 type Tab = 'trades' | 'holders' | 'fees' | 'details';
+
+/** A small marker for a trade made by the token's creator. */
+function DevTag() {
+  return (
+    <span title="Made by the token creator" className="text-[9px] font-mono uppercase tracking-[0.08em] px-1 leading-[14px] rounded-[3px] bg-warning-soft text-warning-fg">
+      dev
+    </span>
+  );
+}
 
 export function TokenRecords({ market, links, fees }: { market: MarketView; links?: TokenDetails['links']; fees?: ReactNode }) {
   const [tab, setTab] = useState<Tab>('trades');
@@ -43,38 +52,43 @@ export function TokenRecords({ market, links, fees }: { market: MarketView; link
         ) : (swaps.data?.swaps.length ?? 0) === 0 ? (
           <Empty>No trades yet. The first swap shows up here within a few blocks.</Empty>
         ) : (
-          <div className="overflow-x-auto">
-            <div className="min-w-[640px]">
-              <div className="grid grid-cols-[90px_60px_1fr_1fr_1fr_1fr_110px_40px] gap-3 px-4 py-2 border-b border-line font-mono text-[11px] uppercase tracking-[0.12em] text-ink-muted">
-                <span>Time</span>
-                <span>Side</span>
-                <span className="text-right">{market.symbol}</span>
-                <span className="text-right">{market.stock.symbol}</span>
-                <span className="text-right">Value</span>
-                <span className="text-right">Price</span>
-                <span>Trader</span>
-                <span />
-              </div>
-              {swaps.data!.swaps.map((s) => (
-                <div key={`${s.txHash}:${s.logIndex}`} className="rail grid grid-cols-[90px_60px_1fr_1fr_1fr_1fr_110px_40px] gap-3 px-4 py-2 border-b border-line last:border-b-0 items-center text-[13px] hover:bg-surface transition-fast">
-                  <span className="font-mono text-[11px] text-ink-muted" title={formatDateTime(s.blockTime)}>
+          <div>
+            {swaps.data!.swaps.some((s) => s.isCreator) && (
+              <p className="px-4 py-2 border-b border-line font-mono text-[11px] text-warning-fg">
+                {swaps.data!.swaps.filter((s) => s.isCreator).length} dev {swaps.data!.swaps.filter((s) => s.isCreator).length === 1 ? 'trade' : 'trades'} by the creator, of the last {swaps.data!.swaps.length}
+              </p>
+            )}
+            {swaps.data!.swaps.map((s) => (
+              <div key={`${s.txHash}:${s.logIndex}`} className="rail flex items-center gap-3 px-4 py-2.5 border-b border-line last:border-b-0 hover:bg-surface transition-fast">
+                <span className="shrink-0 flex flex-col items-start gap-0.5 w-11">
+                  <span className={cx('font-medium text-[13px]', s.side === 'buy' ? 'text-positive-fg' : 'text-danger-fg')}>{s.side === 'buy' ? 'Buy' : 'Sell'}</span>
+                  {s.isCreator && <DevTag />}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block font-mono num text-[13px] truncate">
+                    {formatNumber(s.amountToken, 2)} <span className="text-ink-muted">{market.symbol}</span>
+                  </span>
+                  <span className="block font-mono text-[11px] text-ink-muted truncate" title={formatDateTime(s.blockTime)}>
                     <TimeAgo value={s.blockTime} placeholder="…" />
+                    {' · '}
+                    {s.trader ? (
+                      <Link href={`/wallet/${s.trader}`} className={cx('hover:text-primary', s.isCreator && 'text-warning-fg')}>
+                        {s.isCreator ? 'creator' : shortAddress(s.trader)}
+                      </Link>
+                    ) : (
+                      '—'
+                    )}
                   </span>
-                  <span className={cx('font-medium inline-flex items-center gap-1', s.side === 'buy' ? 'text-positive-fg' : 'text-danger-fg')}>
-                    {s.side === 'buy' ? 'Buy' : 'Sell'}
-                    {s.isCreator && <Badge tone="warning" title="This trade was made by the token creator">dev</Badge>}
-                  </span>
-                  <span className="font-mono num text-right">{formatNumber(s.amountToken, 2)}</span>
-                  <span className="font-mono num text-right">{formatNumber(s.amountStock, 6)}</span>
-                  <span className="font-mono num text-right">{formatUsd(s.amountUsd)}</span>
-                  <span className="font-mono num text-right text-ink-secondary">{formatUsd(s.priceUsd)}</span>
-                  <span className="font-mono text-[12px]">{s.trader ? <Link href={`/wallet/${s.trader}`} className={cx('hover:text-primary', s.isCreator && 'text-warning-fg')}>{s.isCreator ? 'creator' : shortAddress(s.trader)}</Link> : <span className="text-ink-muted">—</span>}</span>
-                  <TxLink hash={s.txHash} className="text-[12px]">
-                    tx
-                  </TxLink>
-                </div>
-              ))}
-            </div>
+                </span>
+                <span className="text-right shrink-0">
+                  <span className="block font-mono num text-[13px]">{formatUsd(s.amountUsd)}</span>
+                  <span className="block font-mono text-[11px] text-ink-muted">{formatNumber(s.amountStock, 6)} {market.stock.symbol}</span>
+                </span>
+                <TxLink hash={s.txHash} className="shrink-0 text-[12px]">
+                  tx
+                </TxLink>
+              </div>
+            ))}
           </div>
         ))}
 
@@ -106,25 +120,23 @@ export function TokenRecords({ market, links, fees }: { market: MarketView; link
                 ))}
               </dl>
             )}
-            <div className="grid grid-cols-[40px_1fr_130px_110px_80px] gap-3 px-4 py-2 border-b border-line font-mono text-[11px] uppercase tracking-[0.12em] text-ink-muted">
-              <span>#</span>
-              <span>Holder</span>
-              <span className="text-right">Balance</span>
-              <span className="text-right">Value</span>
-              <span className="text-right">Share</span>
-            </div>
             {holders.data!.holders.map((h) => (
-              <div key={h.address} className="rail grid grid-cols-[40px_1fr_130px_110px_80px] gap-3 px-4 py-2 border-b border-line last:border-b-0 items-center text-[13px] hover:bg-surface transition-fast">
-                <span className="font-mono num text-ink-muted">{h.rank}</span>
-                <span className="flex items-center gap-2 min-w-0">
+              <div key={h.address} className="rail flex items-center gap-3 px-4 py-2.5 border-b border-line last:border-b-0 hover:bg-surface transition-fast">
+                <span className="font-mono num text-[12px] text-ink-muted w-6 shrink-0 text-right">{h.rank}</span>
+                <span className="min-w-0 flex-1 flex items-center gap-2 flex-wrap">
                   <Link href={`/wallet/${h.address}`} className="font-mono text-[12px] hover:text-primary truncate">
                     {shortAddress(h.address, 6)}
                   </Link>
-                  {h.label && <Badge tone={h.label === 'Creator' ? 'primary' : 'neutral'}>{h.label}</Badge>}
+                  {h.label && (
+                    <span className={cx('text-[9px] font-mono uppercase tracking-[0.08em] px-1 leading-[15px] rounded-[3px]', h.label === 'Creator' ? 'bg-primary-soft text-primary' : 'bg-surface-muted text-ink-secondary')}>{h.label}</span>
+                  )}
                 </span>
-                <span className="font-mono num text-right">{formatNumber(h.balance, 0)}</span>
-                <span className="font-mono num text-right">{formatUsd(market.priceUsd === null ? null : h.balance * market.priceUsd)}</span>
-                <span className="font-mono num text-right">{formatPct(h.sharePercent, { sign: false })}</span>
+                <span className="text-right shrink-0">
+                  <span className="block font-mono num text-[13px]">{formatUsd(market.priceUsd === null ? null : h.balance * market.priceUsd)}</span>
+                  <span className="block font-mono text-[11px] text-ink-muted">
+                    {formatNumber(h.balance, 0)} · {formatPct(h.sharePercent, { sign: false })}
+                  </span>
+                </span>
               </div>
             ))}
           </div>

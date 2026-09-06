@@ -106,6 +106,18 @@ export function TokenView({ address, initialData }: { address: string; initialDa
 
   return (
     <div className="flex flex-col gap-5">
+      <StatStrip
+        columns="grid-cols-2 md:grid-cols-3 lg:grid-cols-6"
+        cells={[
+          { label: 'FDV', value: formatUsd(market.fdvUsd, { compact: true }) },
+          { label: 'Liquidity', value: details?.pool ? formatUsd(details.pool.stockReserveUsd, { compact: true }) : '—' },
+          { label: 'Volume · 24h', value: market.volume24hStock > 0 ? formatUsd(market.volume24hUsd, { compact: true }) : '—' },
+          { label: 'Volume · all', value: details ? formatUsd(details.lifetime.volumeUsd, { compact: true }) : '—' },
+          { label: 'Holders', value: formatNumber(market.holders, 0) },
+          { label: 'Trades · all', value: details ? formatNumber(details.lifetime.trades, 0) : formatNumber(market.trades24h, 0) },
+        ]}
+      />
+
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_380px] gap-5 items-start">
         <div className="flex flex-col gap-5 min-w-0">
           <Module ticks>
@@ -155,18 +167,6 @@ export function TokenView({ address, initialData }: { address: string; initialDa
               <ChartModule token={market.token} poolId={market.poolId} stockSymbol={market.stock.symbol} creatorSwaps={creatorSwaps} />
             </div>
           </Module>
-
-          <StatStrip
-            columns="grid-cols-2 md:grid-cols-3 lg:grid-cols-6"
-            cells={[
-              { label: 'FDV', value: formatUsd(market.fdvUsd, { compact: true }) },
-              { label: 'Liquidity', value: details?.pool ? formatUsd(details.pool.stockReserveUsd, { compact: true }) : '—' },
-              { label: 'Volume · 24h', value: market.volume24hStock > 0 ? formatUsd(market.volume24hUsd, { compact: true }) : '—' },
-              { label: 'Volume · all', value: details ? formatUsd(details.lifetime.volumeUsd, { compact: true }) : '—' },
-              { label: 'Holders', value: formatNumber(market.holders, 0) },
-              { label: 'Trades · all', value: details ? formatNumber(details.lifetime.trades, 0) : formatNumber(market.trades24h, 0) },
-            ]}
-          />
 
           <Module>
             <TokenRecords market={market} links={details?.links} fees={<FeesPanel details={details} market={market} />} />
@@ -235,30 +235,11 @@ function FeesPanel({ details, market }: { details: NonNullable<Extract<TokenResp
       </div>
     );
   }
-  const { fees, pool, lifetime } = details;
+  const { fees, pool } = details;
   const stale = market.stockFeedStatus !== 'live';
   return (
     <div>
-      {pool && <p className="px-4 py-2 border-b border-line font-mono text-[11px] text-ink-muted">swap fee right now {bpsToPct(pool.feeBps)} · paid in {market.stock.symbol}</p>}
-      <div className="px-4 py-2 border-b border-line flex items-center justify-between">
-        <span className="eyebrow">Last 24 hours</span>
-        <PriceChange value={market.change24hPercent} className="font-mono text-[12px]" />
-      </div>
-      <dl className="grid grid-cols-2 md:grid-cols-5 gap-px bg-line border-b border-line">
-        {[
-          { label: 'Volume', value: lifetime.day.trades > 0 ? formatUsd(lifetime.day.volumeUsd, { compact: true }) : '—', sub: lifetime.day.trades > 0 ? `${formatNumber(lifetime.day.volumeStock, 6)} ${market.stock.symbol}` : 'no trades' },
-          { label: 'Trades', value: formatNumber(lifetime.day.trades, 0), sub: `${lifetime.day.buys} buys · ${lifetime.day.sells} sells` },
-          { label: 'Traders', value: formatNumber(lifetime.day.traders, 0), sub: 'unique wallets' },
-          { label: 'Creator trades', value: formatNumber(lifetime.day.creatorTrades, 0), sub: lifetime.day.creatorTrades > 0 ? 'dev activity' : 'none' },
-          { label: 'Fees · all time', value: formatUsd(fees.totalUsd), sub: `${fees.events} swaps` },
-        ].map((c) => (
-          <div key={c.label} className="bg-canvas px-4 py-2.5 min-w-0">
-            <dt className="font-mono text-[10px] uppercase tracking-[0.12em] text-ink-muted">{c.label}</dt>
-            <dd className="display num text-[18px] leading-none mt-1 truncate">{c.value}</dd>
-            <dd className="font-mono text-[11px] text-ink-muted mt-0.5 truncate">{c.sub}</dd>
-          </div>
-        ))}
-      </dl>
+      {pool && <p className="px-4 py-2 border-b border-line font-mono text-[11px] text-ink-muted">swap fee right now {bpsToPct(pool.feeBps)} · paid in {market.stock.symbol} · 70% creator / 30% platform</p>}
       <div className="module-grid grid-cols-2 md:grid-cols-4 rounded-none border-0 border-b border-line">
         <div className="p-3">
           <div className="font-mono text-[10px] uppercase tracking-[0.12em] text-ink-muted">Fees paid · all time</div>
@@ -283,29 +264,16 @@ function FeesPanel({ details, market }: { details: NonNullable<Extract<TokenResp
           <div className="font-mono text-[11px] text-ink-secondary">{fees.claimableStock === null ? '—' : `${formatNumber(fees.claimableStock, 6)} ${market.stock.symbol}`}</div>
         </div>
       </div>
-      <div className="px-4 py-2 grid grid-cols-1 md:grid-cols-2 md:gap-x-8">
-        {pool && (
-          <>
-            <KeyValue k={`${market.stock.symbol} in pool`} v={`${formatNumber(pool.stockReserve, 6)} · ${formatUsd(pool.stockReserveUsd)}${stale ? ' (last close)' : ''}`} />
-            <KeyValue k={`${market.symbol} in pool`} v={`${formatNumber(pool.tokenReserve, 0)} · ${formatPct(pool.tokenShareOfSupply * 100, { sign: false, digits: 2 })} of supply`} />
-          </>
-        )}
-        <KeyValue k="Trades · buys / sells" v={`${lifetime.trades} · ${lifetime.buys} / ${lifetime.sells}`} />
-        <KeyValue k="Unique traders" v={String(lifetime.uniqueTraders)} />
-        <KeyValue
-          k="Creator trades"
-          v={
-            lifetime.creatorTrades === 0 ? (
-              <span className="text-positive-fg">none</span>
-            ) : (
-              <span className={cx(lifetime.creatorSold > 0 && 'text-warning-fg')}>
-                {lifetime.creatorTrades} · bought {formatNumber(lifetime.creatorBought, 0)} · sold {formatNumber(lifetime.creatorSold, 0)}
-              </span>
-            )
-          }
-        />
-      </div>
-      <p className="px-4 py-2.5 border-t border-line text-[11px] text-ink-muted">Fees are held by the hook as claims and withdrawn by the creator from their wallet page. Pool reserves are computed from the locked position and the live pool price.</p>
+      {pool ? (
+        <div className="px-4 py-2">
+          <KeyValue k={`${market.stock.symbol} in pool`} v={`${formatNumber(pool.stockReserve, 6)} · ${formatUsd(pool.stockReserveUsd)}${stale ? ' (last close)' : ''}`} />
+          <KeyValue k={`${market.symbol} in pool`} v={`${formatNumber(pool.tokenReserve, 0)} · ${formatPct(pool.tokenShareOfSupply * 100, { sign: false, digits: 2 })} of supply`} />
+          <KeyValue k="Liquidity" v="100% of supply, locked forever in the v4 position" mono={false} />
+        </div>
+      ) : (
+        <p className="px-4 py-4 text-[13px] text-ink-secondary">Pool reserves load once the pool state is read from the chain.</p>
+      )}
+      <p className="px-4 py-2.5 border-t border-line text-[11px] text-ink-muted">Fees are held by the hook as claims in the stock and withdrawn by the creator from their wallet page. Pool reserves are computed from the locked position and the live pool price.</p>
     </div>
   );
 }

@@ -22,8 +22,11 @@ const NAV = [
   { href: '/stats', label: 'Stats', icon: BarChart3 },
 ] as const;
 
-/** Desktop header: the logo is Home, Markets is the only text link; Create is a button on the right. */
-const DESKTOP_NAV = [{ href: '/markets', label: 'Markets' }] as const;
+/** Desktop header text links; Create is a button on the right, Profile is appended when connected. */
+const DESKTOP_NAV = [
+  { href: '/', label: 'Home' },
+  { href: '/markets', label: 'Markets' },
+] as const;
 
 const FOOTER_LINKS = [
   ['/stocks', 'Stocks', false],
