@@ -10,7 +10,8 @@ export function getDb(): Promise<Db> {
   if (!registry.__stockpairDb) {
     const url = process.env.DATABASE_URL?.trim();
     if (!url) throw new Error('DATABASE_URL is not set.');
-    registry.__stockpairDb = createPostgresDb(url);
+    // Serverless: one small pool per instance; Supabase's transaction pooler multiplexes the rest.
+    registry.__stockpairDb = createPostgresDb(url, { max: 2 });
   }
   return registry.__stockpairDb;
 }

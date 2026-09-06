@@ -40,10 +40,15 @@ function sslFromUrl(url: string): false | 'require' {
 }
 
 /** Production adapter over postgres.js. */
-export async function createPostgresDb(url: string): Promise<Db> {
+/**
+ * Postgres via postgres.js. `max` is the connections this process may hold: keep it tiny on
+ * serverless (every instance has its own pool and Supabase's pooler caps the total) and small for
+ * the single indexer. Works with both pooler modes because statements are never prepared.
+ */
+export async function createPostgresDb(url: string, options: { max?: number } = {}): Promise<Db> {
   const postgres = (await import('postgres')).default;
   const sql = postgres(url, {
-    max: 5,
+    max: options.max ?? 5,
     prepare: false,
     idle_timeout: 20,
     connect_timeout: 10,

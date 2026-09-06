@@ -16,7 +16,7 @@ function log(message: string, fields: Record<string, unknown> = {}): void {
 async function main(): Promise<void> {
   loadEnvFiles();
   const config = loadConfig();
-  const db = await createPostgresDb(config.databaseUrl);
+  const db = await createPostgresDb(config.databaseUrl, { max: 3 });
   await migrate(db);
   const chain = createChainReader(config.rpcUrls);
 
