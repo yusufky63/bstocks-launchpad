@@ -33,8 +33,19 @@ export function StocksView({ initialStocks }: { initialStocks: StocksResponse })
       />
       <ul className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-px bg-line border border-line rounded-[8px] overflow-hidden ticks">
         {stocks.map((s) => (
-          <li key={s.address} className="bg-canvas">
-            <Link href={`/markets?stock=${s.address}`} className={cx('rail flex items-center gap-4 p-4 h-full hover:bg-surface transition-fast', !s.enabled && 'opacity-60')}>
+          <li key={s.address} className="bg-canvas relative">
+            {s.enabled && (
+              <a
+                href={`https://basestocks.finance/stocks/${s.address}`}
+                target="_blank"
+                rel="noreferrer noopener"
+                title={`Buy ${s.ticker} on BaseStocks`}
+                className="absolute top-3 right-3 z-10 inline-flex items-center gap-1 h-8 px-2.5 rounded-[6px] border border-line bg-canvas text-[12px] font-medium text-ink-secondary hover:text-primary hover:border-primary transition-fast"
+              >
+                Buy <ArrowUpRight size={13} strokeWidth={1.75} />
+              </a>
+            )}
+            <Link href={`/markets?stock=${s.address}`} className={cx('rail flex items-center gap-4 p-4 pr-4 h-full hover:bg-surface transition-fast', !s.enabled && 'opacity-60')}>
               <StockTile ticker={s.ticker} size={56} className="rounded-full" muted={!s.enabled} />
               <span className="min-w-0 flex-1">
                 <span className="flex items-center gap-2">
@@ -60,7 +71,6 @@ export function StocksView({ initialStocks }: { initialStocks: StocksResponse })
                   {s.launches} token{s.launches === 1 ? '' : 's'} paired{s.feedUpdatedAt ? <> · feed <TimeAgo value={s.feedUpdatedAt} /></> : null}
                 </span>
               </span>
-              <ArrowUpRight size={16} strokeWidth={1.75} className="text-ink-muted shrink-0" />
             </Link>
           </li>
         ))}

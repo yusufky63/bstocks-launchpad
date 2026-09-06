@@ -153,8 +153,8 @@ export function TradePanel({ market, initialSide = 'buy', onTraded, className }:
         {buy && onBase && stockBalance === 0n && (
           <p className="text-[12px] text-ink-muted border border-dashed border-line rounded-[6px] px-3 py-2">
             You need {market.stock.symbol} to buy. Get it on{' '}
-            <a href="https://www.base.org/stocks" target="_blank" rel="noreferrer noopener" className="text-primary font-medium">
-              base.org/stocks
+            <a href={`https://basestocks.finance/stocks/${market.stock.address}`} target="_blank" rel="noreferrer noopener" className="text-primary font-medium">
+              BaseStocks
             </a>{' '}
             or any Base DEX, then come back.
           </p>

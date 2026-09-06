@@ -26,10 +26,10 @@ const NAV = [
 const DESKTOP_NAV = [
   { href: '/', label: 'Home' },
   { href: '/markets', label: 'Markets' },
+  { href: '/stocks', label: 'Stocks' },
 ] as const;
 
 const FOOTER_LINKS = [
-  ['/stocks', 'Stocks', false],
   ['/stats', 'Stats', false],
   ['/how-it-works', 'How it works', false],
   ['/docs', 'Docs', false],
@@ -40,6 +40,7 @@ const FOOTER_LINKS = [
 function isActive(path: string, href: string): boolean {
   if (href === '/') return path === '/';
   if (href === '/markets') return path.startsWith('/markets') || path.startsWith('/token');
+  if (href === '/stocks') return path.startsWith('/stocks');
   if (href === '/stats') return path.startsWith('/stats');
   if (href.startsWith('/wallet')) return path.startsWith('/wallet');
   return path.startsWith(href);
