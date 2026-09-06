@@ -80,15 +80,23 @@ export function ConnectButton({ size = 'md', full, compact }: { size?: 'sm' | 'm
 
 function rank(id: string): number {
   if (id === 'baseAccount') return 0;
-  if (id === 'coinbaseWalletSDK') return 1;
+  if (id === 'walletConnect') return 1;
+  if (id === 'coinbaseWalletSDK') return 2;
   if (id === 'injected') return 9;
   return 5;
 }
 
 function friendlyName(id: string, name: string): string {
   if (id === 'baseAccount') return 'Base Account';
+  if (id === 'walletConnect') return 'Mobile wallet (WalletConnect)';
   if (id === 'injected') return 'Browser wallet';
   return name;
+}
+
+function subtitle(id: string): string | null {
+  if (id === 'baseAccount') return 'Passkey · works on phone and desktop';
+  if (id === 'walletConnect') return 'MetaMask, Trust, Rainbow and more';
+  return null;
 }
 
 function WalletSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -96,9 +104,18 @@ function WalletSheet({ open, onClose }: { open: boolean; onClose: () => void }) 
   const { isConnected, address } = useAccount();
   const { disconnect } = useDisconnect();
 
+  // A browser extension is only usable when window.ethereum exists; on a phone browser it does not,
+  // so the generic "Browser wallet" option is hidden there and Base Account / WalletConnect are used.
+  const [hasExtension, setHasExtension] = useState(false);
+  useEffect(() => {
+    setHasExtension(typeof window !== 'undefined' && !!(window as { ethereum?: unknown }).ethereum);
+  }, []);
+
   // With several extensions installed, EIP-6963 announces each one; the generic "injected" entry is then redundant.
   const discovered = connectors.some((c) => c.type === 'injected' && c.id !== 'injected');
-  const ordered = connectors.filter((c) => !(discovered && c.id === 'injected')).sort((a, b) => rank(a.id) - rank(b.id));
+  const ordered = connectors
+    .filter((c) => (c.id === 'injected' ? hasExtension && !discovered : true))
+    .sort((a, b) => rank(a.id) - rank(b.id));
 
   return (
     <Sheet open={open} onClose={onClose} title={isConnected ? 'Wallet' : 'Connect a wallet'}>
@@ -136,14 +153,18 @@ function WalletSheet({ open, onClose }: { open: boolean; onClose: () => void }) 
                   /* surfaced via error below */
                 }
               }}
-              className="rail flex items-center justify-between min-h-[52px] px-4 rounded-[6px] border border-line hover:border-line-strong text-left transition-fast disabled:opacity-50"
+              className="rail flex items-center justify-between gap-3 min-h-[52px] px-4 rounded-[6px] border border-line hover:border-line-strong text-left transition-fast disabled:opacity-50"
             >
-              <span className="font-medium">{friendlyName(c.id, c.name)}</span>
-              {c.id === 'baseAccount' && <span className="eyebrow text-primary">Recommended</span>}
+              <span className="min-w-0">
+                <span className="block font-medium">{friendlyName(c.id, c.name)}</span>
+                {subtitle(c.id) && <span className="block text-[12px] text-ink-muted">{subtitle(c.id)}</span>}
+              </span>
+              {c.id === 'baseAccount' && <span className="eyebrow text-primary shrink-0">Recommended</span>}
             </button>
           ))}
+          {ordered.length === 0 && <p className="text-[13px] text-ink-secondary">No wallet found. On a phone, open this site inside your wallet's browser, or use Base Account.</p>}
           {error && <p className="text-[13px] text-danger-fg">{error.message.split('\n')[0]}</p>}
-          <p className="text-[12px] text-ink-muted mt-2">Base Account uses a passkey. Other wallets connect through their own extension or app. No signature is requested on connect.</p>
+          <p className="text-[12px] text-ink-muted mt-2">On a phone, use Base Account (a passkey, no app needed) or WalletConnect to reach MetaMask, Trust and others. No signature is requested on connect.</p>
         </div>
       )}
     </Sheet>

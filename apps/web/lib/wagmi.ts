@@ -1,6 +1,6 @@
-import { cookieStorage, createConfig, createStorage, fallback, http } from 'wagmi';
+import { cookieStorage, createConfig, createStorage, fallback, http, type CreateConnectorFn } from 'wagmi';
 import { base } from 'wagmi/chains';
-import { baseAccount, injected } from 'wagmi/connectors';
+import { baseAccount, injected, walletConnect } from 'wagmi/connectors';
 
 import { publicEnv } from './env';
 
@@ -11,9 +11,26 @@ let cached: ReturnType<typeof createConfig> | null = null;
 export function getWagmiConfig() {
   if (cached) return cached;
   const alchemyRpc = publicEnv.alchemyKey ? `https://base-mainnet.g.alchemy.com/v2/${publicEnv.alchemyKey}` : null;
+  // Base Account (passkey, works on mobile web), any injected extension, and — when a WalletConnect
+  // project id is set — QR / deep-link into a mobile wallet like MetaMask, Trust or Rainbow.
+  const connectors: CreateConnectorFn[] = [baseAccount({ appName: 'StockPair' }), injected()];
+  if (publicEnv.walletConnectId) {
+    connectors.push(
+      walletConnect({
+        projectId: publicEnv.walletConnectId,
+        showQrModal: true,
+        metadata: {
+          name: 'StockPair',
+          description: 'Launch a token on Base that trades against a Coinbase tokenized stock.',
+          url: publicEnv.appUrl,
+          icons: [`${publicEnv.appUrl}/icon.png`],
+        },
+      }),
+    );
+  }
   cached = createConfig({
     chains: [base],
-    connectors: [baseAccount({ appName: 'StockPair' }), injected()],
+    connectors,
     multiInjectedProviderDiscovery: true,
     ssr: true,
     storage: createStorage({ key: WAGMI_STORAGE_KEY, storage: cookieStorage }),

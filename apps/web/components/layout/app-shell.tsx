@@ -1,6 +1,6 @@
 'use client';
 
-import { BarChart3, Home, LineChart, Moon, Plus, PlusSquare, Sun, User } from 'lucide-react';
+import { BarChart3, Home, LineChart, Moon, Plus, PlusSquare, Sun } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import type { ReactNode } from 'react';
@@ -37,7 +37,8 @@ const FOOTER_LINKS = [
 function isActive(path: string, href: string): boolean {
   if (href === '/') return path === '/';
   if (href === '/markets') return path.startsWith('/markets') || path.startsWith('/token');
-  if (href === '/stats') return path.startsWith('/stats') || path.startsWith('/wallet');
+  if (href === '/stats') return path.startsWith('/stats');
+  if (href.startsWith('/wallet')) return path.startsWith('/wallet');
   return path.startsWith(href);
 }
 
@@ -54,7 +55,7 @@ export function AppShell({ children, initialMarkets }: { children: ReactNode; in
               <Wordmark />
             </Link>
             <nav aria-label="Primary" className="hidden md:flex items-center gap-0 lg:gap-0.5 min-w-0">
-              {DESKTOP_NAV.map((n) => {
+              {[...DESKTOP_NAV, ...(address ? [{ href: `/wallet/${address}`, label: 'Profile' }] : [])].map((n) => {
                 const active = isActive(path, n.href);
                 return (
                   <Link
@@ -84,15 +85,6 @@ export function AppShell({ children, initialMarkets }: { children: ReactNode; in
                 <Plus size={15} strokeWidth={2} /> Create token
               </Link>
               <ThemeToggle />
-              {address && (
-                <Link
-                  href={`/wallet/${address}`}
-                  aria-current={path.startsWith('/wallet') ? 'page' : undefined}
-                  className={cx('inline-flex items-center gap-1.5 h-9 px-3 rounded-[6px] border text-[13px] font-medium transition-fast', path.startsWith('/wallet') ? 'text-primary border-primary bg-primary-soft' : 'text-ink-secondary hover:text-ink border-line hover:border-line-strong')}
-                >
-                  <User size={14} strokeWidth={1.75} /> Profile
-                </Link>
-              )}
               <span aria-hidden className="hidden md:block w-px h-6 bg-line mx-1" />
               <ConnectButton size="sm" compact />
             </div>

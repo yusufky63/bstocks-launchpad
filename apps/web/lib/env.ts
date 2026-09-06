@@ -14,6 +14,8 @@ export const publicEnv = {
     'NEXT_PUBLIC_STOCKPAIR',
   ),
   alchemyKey: process.env.NEXT_PUBLIC_ALCHEMY_API_KEY ?? '',
+  /** WalletConnect (Reown) project id; when set it enables the mobile-wallet connector. */
+  walletConnectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ?? '',
 } as const;
 
 export function requireDeployment(): StockPairDeployment {
