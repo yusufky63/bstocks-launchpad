@@ -3,7 +3,7 @@ import 'server-only';
 import { findStock } from '@stockpair/core';
 import { creatorOverview, listActivity, listStocks, platformStats, type Db } from '@stockpair/core/db';
 
-import { cached, TTL } from './cache.server';
+import { cached, RENDER_BUDGET_MS, TTL, withTimeout } from './cache.server';
 import { ipfsToHttp } from './env';
 import type { ActivityResponse, CreatorOverview, StatsResponse, StockFigure } from './types';
 
@@ -29,8 +29,11 @@ function sumUsd(items: { usd: number | null }[]): number | null {
   return priced.length === 0 && items.length > 0 ? null : priced.reduce((s, i) => s + (i.usd ?? 0), 0);
 }
 
+const EMPTY_STATS = (): StatsResponse => ({ launches: 0, launches24h: 0, creators: 0, traders: 0, swaps: 0, swaps24h: 0, holders: 0, firstLaunchAt: null, volumeUsd: null, volume24hUsd: null, feesUsd: null, creatorFeesUsd: null, platformFeesUsd: null, volumeByStock: [], feesByStock: [], launchesByStock: [], asOf: new Date().toISOString() });
+
 export async function readStats(db: Db): Promise<StatsResponse> {
-  return cached('stats', TTL.stats, async () => {
+  return withTimeout(
+    cached('stats', TTL.stats, async () => {
     const [raw, quotes] = await Promise.all([platformStats(db), stockQuotes(db)]);
     const volumeByStock = raw.volume_by_stock.map((v) => {
       const all = figure(quotes, v.stock, v.amount_raw);
@@ -62,12 +65,16 @@ export async function readStats(db: Db): Promise<StatsResponse> {
       launchesByStock: raw.launches_by_stock,
       asOf: new Date().toISOString(),
     };
-  });
+    }),
+    RENDER_BUDGET_MS,
+    EMPTY_STATS(),
+  );
 }
 
 export async function readActivity(db: Db, options: { limit?: number; token?: string; actor?: string } = {}): Promise<ActivityResponse> {
   const key = `activity:${options.token ?? ''}:${options.actor ?? ''}:${options.limit ?? 50}`;
-  return cached(key, TTL.list, async () => {
+  return withTimeout(
+    cached(key, TTL.list, async () => {
     const [rows, quotes] = await Promise.all([listActivity(db, options), stockQuotes(db)]);
     return {
       items: rows.map((r) => {
@@ -93,7 +100,10 @@ export async function readActivity(db: Db, options: { limit?: number; token?: st
       }),
       asOf: new Date().toISOString(),
     };
-  });
+    }),
+    RENDER_BUDGET_MS,
+    { items: [], asOf: new Date().toISOString() },
+  );
 }
 
 export async function readCreatorOverview(db: Db, creator: string): Promise<CreatorOverview> {

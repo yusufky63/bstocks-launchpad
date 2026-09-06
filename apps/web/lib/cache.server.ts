@@ -42,6 +42,28 @@ function sweep(): void {
   for (const [key, entry] of store) if (entry.expiresAt <= now) store.delete(key);
 }
 
+/**
+ * Resolves with the fallback if the promise has not settled within ms. A serverless render must
+ * never hang on a slow database read: it returns an empty shell and the client polls to fill in.
+ * The underlying promise keeps running and still populates the cache for the next request.
+ */
+export function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return new Promise<T>((resolve) => {
+    let settled = false;
+    const finish = (value: T) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const timer = setTimeout(() => finish(fallback), ms);
+    promise.then(finish, () => finish(fallback));
+  });
+}
+
+/** How long a server component may wait for initial data before rendering an empty shell. */
+export const RENDER_BUDGET_MS = 7_000;
+
 export const TTL = {
   /** Lists that refresh with every indexer tick. */
   list: 5_000,

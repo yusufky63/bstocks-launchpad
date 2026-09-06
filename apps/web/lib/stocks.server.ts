@@ -2,14 +2,14 @@ import 'server-only';
 
 import { listStocks } from '@stockpair/core/db';
 
-import { cached, TTL } from './cache.server';
+import { cached, RENDER_BUDGET_MS, TTL, withTimeout } from './cache.server';
 import { getDb } from './db.server';
 import { feedStatus } from './market-view';
 import type { StocksResponse } from './types';
 
 /** The /api/stocks payload, built server-side so pages and the shell can render it on first paint. */
 export async function readStocksResponse(): Promise<StocksResponse> {
-  return cached('stocks', TTL.stocks, readStocksUncached);
+  return withTimeout(cached('stocks', TTL.stocks, readStocksUncached), RENDER_BUDGET_MS, { stocks: [] });
 }
 
 async function readStocksUncached(): Promise<StocksResponse> {
