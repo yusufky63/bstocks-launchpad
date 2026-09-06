@@ -6,7 +6,6 @@ import { cookieToInitialState } from 'wagmi';
 
 import { AppShell } from '@/components/layout/app-shell';
 import { Providers } from '@/components/providers';
-import { readMarketsResponse } from '@/lib/markets.server';
 import { getWagmiConfig } from '@/lib/wagmi';
 
 import './globals.css';
@@ -58,7 +57,6 @@ const themeScript = `(function(){try{var t=localStorage.getItem('stockpair:theme
 export default async function RootLayout({ children }: { children: ReactNode }) {
   const cookieHeader = (await cookies()).toString();
   const initialState = cookieToInitialState(getWagmiConfig(), cookieHeader);
-  const markets = await readMarketsResponse({ limit: 40 }).catch(() => undefined);
   return (
     <html lang="en" suppressHydrationWarning className={`${body.variable} ${display.variable} ${mono.variable} h-full`}>
       <head>
@@ -66,7 +64,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
       </head>
       <body className="min-h-full flex flex-col bg-canvas text-ink">
         <Providers initialState={initialState}>
-          <AppShell initialMarkets={markets}>{children}</AppShell>
+          <AppShell>{children}</AppShell>
         </Providers>
       </body>
     </html>
