@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useState, type ReactNode } from 'react';
 
 import { Tabs } from '@/components/ui/controls';
-import { AddressLabel, TimeAgo, TxLink } from '@/components/ui/display';
+import { AddressLabel, Named, TimeAgo, TxLink } from '@/components/ui/display';
 import { Empty, KeyValue, Skeleton, cx } from '@/components/ui/primitives';
 import { formatDateTime, formatNumber, formatPct, formatRatio, formatUsd, shortAddress } from '@/lib/format';
 import { useHolders, useSwaps } from '@/lib/queries';
@@ -73,7 +73,7 @@ export function TokenRecords({ market, links, fees }: { market: MarketView; link
                     {' · '}
                     {s.trader ? (
                       <Link href={`/wallet/${s.trader}`} className={cx('hover:text-primary', s.isCreator && 'text-warning-fg')}>
-                        {s.isCreator ? 'creator' : shortAddress(s.trader)}
+                        {s.isCreator ? 'creator' : <Named address={s.trader} />}
                       </Link>
                     ) : (
                       '—'
@@ -125,7 +125,7 @@ export function TokenRecords({ market, links, fees }: { market: MarketView; link
                 <span className="font-mono num text-[12px] text-ink-muted w-6 shrink-0 text-right">{h.rank}</span>
                 <span className="min-w-0 flex-1 flex items-center gap-2 flex-wrap">
                   <Link href={`/wallet/${h.address}`} className="font-mono text-[12px] hover:text-primary truncate">
-                    {shortAddress(h.address, 6)}
+                    <Named address={h.address} chars={6} />
                   </Link>
                   {h.label && (
                     <span className={cx('text-[9px] font-mono uppercase tracking-[0.08em] px-1 leading-[15px] rounded-[3px]', h.label === 'Creator' ? 'bg-primary-soft text-primary' : 'bg-surface-muted text-ink-secondary')}>{h.label}</span>

@@ -3,10 +3,24 @@
 import { Check, CircleAlert, CircleCheck, Copy, ExternalLink, Info, TriangleAlert } from 'lucide-react';
 import { useEffect, useReducer, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 
+import { useBasename } from '@/components/providers/basenames';
 import { formatPct, shortAddress, timeAgo } from '@/lib/format';
 import { motionEnabled } from '@/lib/motion';
 
 import { cx } from './primitives';
+
+/**
+ * Shows an address as its Base name (e.g. "yusuf.base.eth") when it has one, falling back to the
+ * short hex form while resolving or when it has none. The full address is always in the title.
+ */
+export function Named({ address, chars = 4, className }: { address: string; chars?: number; className?: string }) {
+  const name = useBasename(address);
+  return (
+    <span className={className} title={address}>
+      {name ?? shortAddress(address, chars)}
+    </span>
+  );
+}
 
 export const BASE_EXPLORER_URL = 'https://basescan.org';
 

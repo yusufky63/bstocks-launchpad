@@ -3,7 +3,7 @@
 import Link from 'next/link';
 
 import { StockTile, TokenLogo } from '@/components/stock/stock-coin';
-import { AnimatedNumber, PriceChange, TimeAgo } from '@/components/ui/display';
+import { AnimatedNumber, PriceChange, TimeAgo, Named } from '@/components/ui/display';
 import { Badge, cx } from '@/components/ui/primitives';
 import { formatNumber, formatUsd, shortAddress } from '@/lib/format';
 import type { MarketView } from '@/lib/types';
@@ -62,7 +62,7 @@ export function MarketDetailRow({ market, rank }: { market: MarketView; rank?: n
           <span className="flex items-center gap-2 mt-0.5 text-[12px] text-ink-secondary min-w-0">
             <PairBadge market={market} />
             <span className="truncate">
-              by <span className="font-mono">{shortAddress(market.creator)}</span> · <TimeAgo value={market.launchedAt} placeholder="…" />
+              by <Named address={market.creator} className="font-mono" /> · <TimeAgo value={market.launchedAt} placeholder="…" />
             </span>
           </span>
         </span>

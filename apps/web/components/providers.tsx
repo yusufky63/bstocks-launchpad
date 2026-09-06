@@ -5,6 +5,7 @@ import { type ReactNode, useState } from 'react';
 import { type State, WagmiProvider } from 'wagmi';
 
 import { ThemeProvider } from '@/components/layout/theme-provider';
+import { BasenamesProvider } from '@/components/providers/basenames';
 import { getWagmiConfig } from '@/lib/wagmi';
 
 export function Providers({ children, initialState }: { children: ReactNode; initialState?: State | undefined }) {
@@ -18,7 +19,9 @@ export function Providers({ children, initialState }: { children: ReactNode; ini
   return (
     <WagmiProvider config={config} initialState={initialState} reconnectOnMount>
       <QueryClientProvider client={queryClient}>
-        <ThemeProvider>{children}</ThemeProvider>
+        <ThemeProvider>
+          <BasenamesProvider>{children}</BasenamesProvider>
+        </ThemeProvider>
       </QueryClientProvider>
     </WagmiProvider>
   );

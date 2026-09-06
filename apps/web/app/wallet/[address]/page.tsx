@@ -4,7 +4,7 @@ import { notFound } from 'next/navigation';
 
 import { MarketDetailRow } from '@/components/markets/market-rows';
 import { TokenLogo } from '@/components/stock/stock-coin';
-import { AddressLabel, TimeAgo, TxLink } from '@/components/ui/display';
+import { AddressLabel, Named, TimeAgo, TxLink } from '@/components/ui/display';
 import { Badge, Empty, KeyValue, LinkButton, Module, ModuleHeader, PageTitle, StatStrip } from '@/components/ui/primitives';
 import { ClaimFees } from '@/components/wallet/claim-fees';
 import { parseAddressParam } from '@/lib/api.server';
@@ -33,7 +33,7 @@ export default async function WalletPage({ params }: Props) {
     <div className="flex flex-col gap-5">
       <PageTitle
         index={isCreator ? '05 — Creator profile' : '05 — Wallet'}
-        title={<span className="font-mono tracking-normal text-[28px] md:text-[36px]">{shortAddress(wallet, 6)}</span>}
+        title={<span className="font-mono tracking-normal text-[28px] md:text-[36px]"><Named address={wallet} chars={6} /></span>}
         lead={
           <span className="flex items-center gap-3 flex-wrap">
             <AddressLabel address={wallet} explorer chars={12} />

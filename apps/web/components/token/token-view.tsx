@@ -9,7 +9,7 @@ import { useState } from 'react';
 import { PairBadge } from '@/components/markets/market-rows';
 import { TokenLogo } from '@/components/stock/stock-coin';
 import { TradePanel } from '@/components/trade/trade-panel';
-import { AddressLabel, AnimatedNumber, Banner, PriceChange, TimeAgo, TxLink } from '@/components/ui/display';
+import { AddressLabel, AnimatedNumber, Banner, PriceChange, TimeAgo, TxLink, Named } from '@/components/ui/display';
 import { Badge, Button, KeyValue, Module, Skeleton, StatStrip, cx } from '@/components/ui/primitives';
 import { Sheet, StickyPanel } from '@/components/ui/sheet';
 import { bpsToPct, formatDateTime, formatNumber, formatPct, formatRatio, formatUsd, shortAddress } from '@/lib/format';
@@ -137,7 +137,7 @@ export function TokenView({ address, initialData }: { address: string; initialDa
                       launched <TimeAgo value={market.launchedAt} placeholder="…" />
                     </Badge>
                     <Link href={`/wallet/${market.creator}`} className="inline-flex">
-                      <Badge tone="primary" className="hover:bg-primary/15 transition-fast">creator {shortAddress(market.creator)}</Badge>
+                      <Badge tone="primary" className="hover:bg-primary/15 transition-fast">creator <Named address={market.creator} /></Badge>
                     </Link>
                   </div>
                 </div>
