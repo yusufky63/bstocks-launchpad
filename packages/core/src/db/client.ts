@@ -57,21 +57,44 @@ export async function createPostgresDb(url: string, options: { max?: number } = 
     onnotice: () => undefined,
   });
 
-  const wrap = (client: typeof sql): Db => ({
-    async query<T extends Row>(text: string, params: readonly unknown[] = []) {
-      const rows = await client.unsafe(text, params as never[]);
-      return normalizeRows<T>(rows as unknown as Row[]);
-    },
-    async exec(text: string) {
-      await client.unsafe(text);
-    },
-    async transaction<T>(fn: (tx: Db) => Promise<T>) {
-      return client.begin(async (tx) => fn(wrap(tx as unknown as typeof sql))) as Promise<T>;
-    },
-    async close() {
-      await client.end({ timeout: 5 });
-    },
-  });
+  /**
+   * Queries are run one at a time per client.
+   *
+   * Supabase's transaction pooler cannot serve concurrent queries from a single client: postgres.js
+   * pipelines them down one connection, and measured against production six issued together never
+   * came back at all, while the same six run in sequence finished in milliseconds. Serialising here
+   * rather than at every call site means code can still say `Promise.all` for what it needs without
+   * that quietly turning into a stall, and it is close to free now that the app runs in the
+   * database's own region.
+   */
+  const wrap = (client: typeof sql): Db => {
+    let queue: Promise<unknown> = Promise.resolve();
+    const serial = <T>(run: () => Promise<T>): Promise<T> => {
+      const result = queue.then(run, run);
+      // The queue must survive a failed query, so swallow the outcome for the next in line only.
+      queue = result.then(
+        () => undefined,
+        () => undefined,
+      );
+      return result;
+    };
+    return {
+      async query<T extends Row>(text: string, params: readonly unknown[] = []) {
+        const rows = await serial(() => client.unsafe(text, params as never[]));
+        return normalizeRows<T>(rows as unknown as Row[]);
+      },
+      async exec(text: string) {
+        await serial(() => client.unsafe(text));
+      },
+      async transaction<T>(fn: (tx: Db) => Promise<T>) {
+        // The transaction gets its own connection, and its own queue via this same wrapper.
+        return serial(() => client.begin(async (tx) => fn(wrap(tx as unknown as typeof sql))) as Promise<T>);
+      },
+      async close() {
+        await client.end({ timeout: 5 });
+      },
+    };
+  };
   return wrap(sql);
 }
 

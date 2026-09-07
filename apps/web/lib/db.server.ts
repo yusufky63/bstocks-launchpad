@@ -12,12 +12,13 @@ export function getDb(): Promise<Db> {
     if (!url) throw new Error('DATABASE_URL is not set.');
     // Serverless: one small pool per instance; Supabase's transaction pooler multiplexes the rest.
     //
-    // `max` is deliberately small. Opening a connection to the database costs a TLS handshake plus
-    // pooler auth, measured at ~3.7s from outside its region, and postgres.js opens a new connection
-    // for every concurrent query up to this limit. Raising it makes a burst of parallel queries pay
-    // that handshake several times over instead of sharing one warm connection. The functions are
-    // pinned to the database's region in vercel.json, which is what actually makes this cheap.
-    registry.__stockpairDb = createPostgresDb(url, { max: 3 });
+    // One connection per instance, on purpose. postgres.js opens a separate connection for every
+    // concurrent query, and against Supabase's transaction pooler a burst of them stalls: pages
+    // built from a single query stayed fast while the ones firing six at once timed out. Pipelining
+    // several queries down one connection avoids that, and since the functions now run in the
+    // database's region a serialised round trip costs milliseconds rather than the ~350ms it did
+    // from outside. It also means an instance holds one pooler slot instead of three.
+    registry.__stockpairDb = createPostgresDb(url, { max: 1 });
   }
   return registry.__stockpairDb;
 }
