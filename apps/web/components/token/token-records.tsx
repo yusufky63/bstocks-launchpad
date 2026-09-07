@@ -13,6 +13,27 @@ import { ExternalLink } from 'lucide-react';
 
 type Tab = 'trades' | 'holders' | 'fees' | 'details';
 
+/** Page controls shared by the trades and holders tabs: a position readout and two steps. */
+function Pager({ page, from, to, total, busy, hasNext, onPrev, onNext, labels = ['Previous', 'Next'] }: { page: number; from: number; to: number; total?: number; busy: boolean; hasNext: boolean; onPrev: () => void; onNext: () => void; labels?: [string, string] }) {
+  if (page === 0 && !hasNext) return null;
+  const step = 'h-8 px-3 rounded-[6px] border border-line text-[12px] font-medium transition-fast disabled:opacity-40 disabled:cursor-not-allowed enabled:hover:border-line-strong enabled:hover:text-ink text-ink-secondary';
+  return (
+    <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-t border-line">
+      <span className="font-mono text-[11px] text-ink-muted">
+        {busy ? 'Loading…' : `${from}–${to}${total ? ` of ${formatNumber(total, 0)}` : ''}`}
+      </span>
+      <span className="flex items-center gap-2">
+        <button type="button" className={step} disabled={page === 0 || busy} onClick={onPrev}>
+          {labels[0]}
+        </button>
+        <button type="button" className={step} disabled={!hasNext || busy} onClick={onNext}>
+          {labels[1]}
+        </button>
+      </span>
+    </div>
+  );
+}
+
 /** A small marker for a trade made by the token's creator. */
 function DevTag() {
   return (
@@ -22,19 +43,24 @@ function DevTag() {
   );
 }
 
-const PAGE = 100;
+/** Rows shown per page in the trades and holders tabs. */
+const PER_PAGE = 25;
+/** Rows pulled from the API in one request; a fetch covers several pages of scrolling. */
+const FETCH = 100;
 const HOLDERS_MAX = 500;
 
 export function TokenRecords({ market, links, fees, trades }: { market: MarketView; links?: TokenDetails['links']; fees?: ReactNode; trades?: number }) {
   const [tab, setTab] = useState<Tab>('trades');
   const swaps = useSwaps(market.token, tab === 'trades');
-  const [holdersLimit, setHoldersLimit] = useState(PAGE);
+  const [holdersLimit, setHoldersLimit] = useState(FETCH);
   const holders = useHolders(market.token, tab === 'holders', holdersLimit);
 
-  // The first page stays live (the query refetches); older pages are fetched once and appended.
+  // The newest page stays live (the query refetches); older pages are fetched once and appended.
   const [older, setOlder] = useState<SwapView[]>([]);
   const [loadingMore, setLoadingMore] = useState(false);
   const [exhausted, setExhausted] = useState(false);
+  const [tradePage, setTradePage] = useState(0);
+  const [holderPage, setHolderPage] = useState(0);
   const latest = swaps.data?.swaps;
   const allSwaps = useMemo(() => {
     const head = latest ?? [];
@@ -42,19 +68,39 @@ export function TokenRecords({ market, links, fees, trades }: { market: MarketVi
     return [...head, ...older.filter((s) => !seen.has(`${s.txHash}:${s.logIndex}`))];
   }, [latest, older]);
 
-  const loadMore = async () => {
+  const fetchOlder = async (): Promise<number> => {
     const last = allSwaps[allSwaps.length - 1];
-    if (!last || loadingMore) return;
+    if (!last) return 0;
     setLoadingMore(true);
     try {
-      const page = await apiGet<SwapsResponse>(`/api/tokens/${market.token}/swaps?limit=${PAGE}&before=${last.blockNumber}&beforeLog=${last.logIndex}`);
+      const page = await apiGet<SwapsResponse>(`/api/tokens/${market.token}/swaps?limit=${FETCH}&before=${last.blockNumber}&beforeLog=${last.logIndex}`);
       setOlder((prev) => [...prev, ...page.swaps]);
-      if (page.swaps.length < PAGE) setExhausted(true);
+      if (page.swaps.length < FETCH) setExhausted(true);
+      return page.swaps.length;
     } catch {
-      /* button stays; the user can retry */
+      return 0;
+    } finally {
+      setLoadingMore(false);
     }
-    setLoadingMore(false);
   };
+
+  // Paging past what is loaded pulls the next batch first, so the reader never sees a short page.
+  const nextTradePage = async () => {
+    if (loadingMore) return;
+    const needed = (tradePage + 2) * PER_PAGE;
+    if (allSwaps.length < needed && !exhausted) {
+      const got = await fetchOlder();
+      if (got === 0 && allSwaps.length <= (tradePage + 1) * PER_PAGE) return;
+    }
+    setTradePage((p) => p + 1);
+  };
+
+  const tradeRows = allSwaps.slice(tradePage * PER_PAGE, (tradePage + 1) * PER_PAGE);
+  const moreTrades = allSwaps.length > (tradePage + 1) * PER_PAGE || !exhausted;
+  const loadedHolders = holders.data?.holders ?? [];
+  const holderRows = loadedHolders.slice(holderPage * PER_PAGE, (holderPage + 1) * PER_PAGE);
+  // We hold `holdersLimit` rows; more exist if the fetch came back full and we have not raised the cap.
+  const loadedHoldersCapped = loadedHolders.length >= holdersLimit && holdersLimit < HOLDERS_MAX;
 
   return (
     <>
@@ -84,10 +130,10 @@ export function TokenRecords({ market, links, fees, trades }: { market: MarketVi
           <div>
             {allSwaps.some((s) => s.isCreator) && (
               <p className="px-4 py-2 border-b border-line font-mono text-[11px] text-warning-fg">
-                {allSwaps.filter((s) => s.isCreator).length} dev {allSwaps.filter((s) => s.isCreator).length === 1 ? 'trade' : 'trades'} by the creator, of the last {allSwaps.length}
+                {allSwaps.filter((s) => s.isCreator).length} dev {allSwaps.filter((s) => s.isCreator).length === 1 ? 'trade' : 'trades'} by the creator, of the {allSwaps.length} loaded
               </p>
             )}
-            {allSwaps.map((s) => (
+            {tradeRows.map((s) => (
               <div key={`${s.txHash}:${s.logIndex}`} className="rail flex items-center gap-3 px-4 py-2.5 border-b border-line last:border-b-0 hover:bg-surface transition-fast">
                 <span className="shrink-0 flex flex-col items-start gap-0.5 w-11">
                   <span className={cx('font-medium text-[13px]', s.side === 'buy' ? 'text-positive-fg' : 'text-danger-fg')}>{s.side === 'buy' ? 'Buy' : 'Sell'}</span>
@@ -118,11 +164,17 @@ export function TokenRecords({ market, links, fees, trades }: { market: MarketVi
                 </TxLink>
               </div>
             ))}
-            {!exhausted && allSwaps.length >= PAGE && (
-              <button type="button" disabled={loadingMore} onClick={() => void loadMore()} className="w-full h-10 border-t border-line text-[13px] font-medium text-primary hover:bg-surface transition-fast disabled:opacity-50">
-                {loadingMore ? 'Loading…' : 'Load older trades'}
-              </button>
-            )}
+            <Pager
+              page={tradePage}
+              from={tradePage * PER_PAGE + 1}
+              to={tradePage * PER_PAGE + tradeRows.length}
+              total={trades}
+              busy={loadingMore}
+              hasNext={moreTrades}
+              onPrev={() => setTradePage((p) => Math.max(0, p - 1))}
+              onNext={() => void nextTradePage()}
+              labels={['Newer', 'Older']}
+            />
           </div>
         ))}
 
@@ -154,7 +206,7 @@ export function TokenRecords({ market, links, fees, trades }: { market: MarketVi
                 ))}
               </dl>
             )}
-            {holders.data!.holders.map((h) => (
+            {holderRows.map((h) => (
               <div key={h.address} className="rail flex items-center gap-3 px-4 py-2.5 border-b border-line last:border-b-0 hover:bg-surface transition-fast">
                 <span className="font-mono num text-[12px] text-ink-muted w-6 shrink-0 text-right">{h.rank}</span>
                 <span className="min-w-0 flex-1 flex items-center gap-2 flex-wrap">
@@ -173,11 +225,20 @@ export function TokenRecords({ market, links, fees, trades }: { market: MarketVi
                 </span>
               </div>
             ))}
-            {(holders.data?.holders.length ?? 0) >= holdersLimit && holdersLimit < HOLDERS_MAX && (
-              <button type="button" disabled={holders.isFetching} onClick={() => setHoldersLimit(HOLDERS_MAX)} className="w-full h-10 border-t border-line text-[13px] font-medium text-primary hover:bg-surface transition-fast disabled:opacity-50">
-                {holders.isFetching ? 'Loading…' : `Show top ${HOLDERS_MAX} holders`}
-              </button>
-            )}
+            <Pager
+              page={holderPage}
+              from={holderPage * PER_PAGE + 1}
+              to={holderPage * PER_PAGE + holderRows.length}
+              total={market.holders}
+              busy={holders.isFetching}
+              hasNext={(holders.data?.holders.length ?? 0) > (holderPage + 1) * PER_PAGE || loadedHoldersCapped}
+              onPrev={() => setHolderPage((p) => Math.max(0, p - 1))}
+              onNext={() => {
+                // Near the end of what was fetched, widen the request before stepping on.
+                if (loadedHoldersCapped) setHoldersLimit(HOLDERS_MAX);
+                setHolderPage((p) => p + 1);
+              }}
+            />
           </div>
         ))}
 
