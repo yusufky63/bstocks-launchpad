@@ -11,5 +11,5 @@ export const metadata: Metadata = { title: 'Stats & activity' };
 export default async function StatsPage() {
   const db = await getDb();
   const [stats, activity] = await Promise.all([readStats(db), readActivity(db, { limit: 60 })]);
-  return <StatsView initialStats={stats} initialActivity={activity} />;
+  return <StatsView initialStats={stats ?? undefined} initialActivity={activity ?? undefined} />;
 }

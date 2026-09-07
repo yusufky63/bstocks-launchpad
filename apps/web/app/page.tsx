@@ -9,5 +9,5 @@ export const dynamic = 'force-dynamic';
  */
 export default async function HomePage() {
   const markets = await readMarketsResponse({ limit: 100 });
-  return <HomeView initialMarkets={markets} />;
+  return <HomeView initialMarkets={markets ?? undefined} />;
 }

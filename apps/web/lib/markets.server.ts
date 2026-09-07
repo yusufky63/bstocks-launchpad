@@ -8,7 +8,8 @@ import { toMarketView } from './market-view';
 import type { MarketsResponse } from './types';
 
 /** The /api/markets payload for the common list shapes, memoised for a few seconds. */
-export async function readMarketsResponse(options: { stock?: string; limit?: number } = {}): Promise<MarketsResponse> {
+/** Null means the read did not finish in time — never "there are no tokens". */
+export async function readMarketsResponse(options: { stock?: string; limit?: number } = {}): Promise<MarketsResponse | null> {
   const limit = options.limit ?? 100;
   return withTimeout(
     cached(`markets:${options.stock ?? ''}::${limit}:0`, TTL.list, async () => {
@@ -18,6 +19,6 @@ export async function readMarketsResponse(options: { stock?: string; limit?: num
       return { markets: rows.map((row) => toMarketView(row, now)), asOf: now.toISOString() };
     }),
     RENDER_BUDGET_MS,
-    { markets: [], asOf: new Date().toISOString() },
+    null,
   );
 }

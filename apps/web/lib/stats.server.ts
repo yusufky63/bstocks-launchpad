@@ -1,11 +1,11 @@
 import 'server-only';
 
 import { findStock } from '@stockpair/core';
-import { creatorOverview, listActivity, listStocks, platformStats, type Db } from '@stockpair/core/db';
+import { creatorOverview, listActivity, listStocks, platformStats, topCreatorsByFees, type Db } from '@stockpair/core/db';
 
 import { cached, RENDER_BUDGET_MS, TTL, withTimeout } from './cache.server';
 import { ipfsToHttp } from './env';
-import type { ActivityResponse, CreatorOverview, StatsResponse, StockFigure } from './types';
+import type { ActivityResponse, CreatorOverview, StatsResponse, StockFigure, TopCreator } from './types';
 
 type Quotes = Map<string, { usd: number | null; decimals: number; symbol: string; ticker: string }>;
 
@@ -29,12 +29,15 @@ function sumUsd(items: { usd: number | null }[]): number | null {
   return priced.length === 0 && items.length > 0 ? null : priced.reduce((s, i) => s + (i.usd ?? 0), 0);
 }
 
-const EMPTY_STATS = (): StatsResponse => ({ launches: 0, launches24h: 0, creators: 0, traders: 0, swaps: 0, swaps24h: 0, holders: 0, firstLaunchAt: null, volumeUsd: null, volume24hUsd: null, feesUsd: null, creatorFeesUsd: null, platformFeesUsd: null, volumeByStock: [], feesByStock: [], launchesByStock: [], asOf: new Date().toISOString() });
-
-export async function readStats(db: Db): Promise<StatsResponse> {
+/**
+ * Null means "could not be read in time", never "the platform has no activity". A timeout used to
+ * resolve to an all-zero response, which the polling client then wrote over its good data — the page
+ * silently reset to $0 and 0 launches. Callers must render the absence, not a fabricated figure.
+ */
+export async function readStats(db: Db): Promise<StatsResponse | null> {
   return withTimeout(
     cached('stats', TTL.stats, async () => {
-    const [raw, quotes] = await Promise.all([platformStats(db), stockQuotes(db)]);
+    const [raw, quotes, creatorRows] = await Promise.all([platformStats(db), stockQuotes(db), topCreatorsByFees(db, 10)]);
     const volumeByStock = raw.volume_by_stock.map((v) => {
       const all = figure(quotes, v.stock, v.amount_raw);
       const day = figure(quotes, v.stock, v.day_raw);
@@ -44,6 +47,17 @@ export async function readStats(db: Db): Promise<StatsResponse> {
       const total = figure(quotes, f.stock, f.amount_raw);
       return { ...total, creatorAmount: figure(quotes, f.stock, f.creator_raw).amount, platformAmount: figure(quotes, f.stock, f.platform_raw).amount };
     });
+    // One row per (creator, stock); fold them into one entry per creator, ranked by what they earned.
+    const byCreator = new Map<string, TopCreator>();
+    for (const row of creatorRows) {
+      const entry = byCreator.get(row.creator) ?? { creator: row.creator, tokens: row.tokens, earnedUsd: null, byStock: [] };
+      entry.byStock.push(figure(quotes, row.stock, row.creator_raw));
+      byCreator.set(row.creator, entry);
+    }
+    const topCreators = [...byCreator.values()]
+      .map((c) => ({ ...c, earnedUsd: sumUsd(c.byStock) }))
+      .sort((a, b) => (b.earnedUsd ?? 0) - (a.earnedUsd ?? 0));
+
     const creatorFees = raw.fees_by_stock.map((f) => figure(quotes, f.stock, f.creator_raw));
     const platformFees = raw.fees_by_stock.map((f) => figure(quotes, f.stock, f.platform_raw));
     return {
@@ -63,15 +77,16 @@ export async function readStats(db: Db): Promise<StatsResponse> {
       volumeByStock,
       feesByStock,
       launchesByStock: raw.launches_by_stock,
+      topCreators,
       asOf: new Date().toISOString(),
     };
     }),
     RENDER_BUDGET_MS,
-    EMPTY_STATS(),
+    null,
   );
 }
 
-export async function readActivity(db: Db, options: { limit?: number; token?: string; actor?: string } = {}): Promise<ActivityResponse> {
+export async function readActivity(db: Db, options: { limit?: number; token?: string; actor?: string } = {}): Promise<ActivityResponse | null> {
   const key = `activity:${options.token ?? ''}:${options.actor ?? ''}:${options.limit ?? 50}`;
   return withTimeout(
     cached(key, TTL.list, async () => {
@@ -102,7 +117,7 @@ export async function readActivity(db: Db, options: { limit?: number; token?: st
     };
     }),
     RENDER_BUDGET_MS,
-    { items: [], asOf: new Date().toISOString() },
+    null,
   );
 }
 

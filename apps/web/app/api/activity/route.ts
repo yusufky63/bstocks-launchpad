@@ -17,5 +17,8 @@ export async function GET(request: Request): Promise<Response> {
   const actor = parsed.data.actor ? parseAddressParam(parsed.data.actor) : null;
   if (parsed.data.actor && !actor) return error(400, 'INVALID_ACTOR', 'actor must be an address.');
   const db = await getDb();
-  return json(await readActivity(db, { limit: parsed.data.limit, ...(token ? { token } : {}), ...(actor ? { actor } : {}) }));
+  const activity = await readActivity(db, { limit: parsed.data.limit, ...(token ? { token } : {}), ...(actor ? { actor } : {}) });
+  // 503 rather than an empty feed: an empty list would read as "nothing has happened".
+  if (!activity) return error(503, 'ACTIVITY_UNAVAILABLE', 'Activity could not be read in time.');
+  return json(activity);
 }

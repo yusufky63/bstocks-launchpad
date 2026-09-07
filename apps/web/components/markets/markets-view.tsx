@@ -56,7 +56,7 @@ export function applyScreen(rows: MarketView[], screen: Screen, now = Date.now()
 
 const COLUMNS = 'md:grid-cols-[minmax(0,1fr)_110px_130px_90px_120px_110px_80px_150px]';
 
-export function MarketsView({ initialMarkets, initialStocks, initialStock }: { initialMarkets: MarketsResponse; initialStocks: StocksResponse; initialStock?: string }) {
+export function MarketsView({ initialMarkets, initialStocks, initialStock }: { initialMarkets?: MarketsResponse; initialStocks?: StocksResponse; initialStock?: string }) {
   const [stock, setStock] = useState<string | null>(initialStock ?? null);
   const [screen, setScreen] = useState<Screen>('all');
   const [query, setQuery] = useState('');

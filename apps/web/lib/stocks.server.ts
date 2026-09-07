@@ -8,8 +8,9 @@ import { feedStatus } from './market-view';
 import type { StocksResponse } from './types';
 
 /** The /api/stocks payload, built server-side so pages and the shell can render it on first paint. */
-export async function readStocksResponse(): Promise<StocksResponse> {
-  return withTimeout(cached('stocks', TTL.stocks, readStocksUncached), RENDER_BUDGET_MS, { stocks: [] });
+/** Null means the read did not finish in time — never "there are no stocks". */
+export async function readStocksResponse(): Promise<StocksResponse | null> {
+  return withTimeout(cached('stocks', TTL.stocks, readStocksUncached), RENDER_BUDGET_MS, null);
 }
 
 async function readStocksUncached(): Promise<StocksResponse> {

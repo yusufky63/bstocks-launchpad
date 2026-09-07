@@ -9,5 +9,5 @@ export const metadata: Metadata = { title: 'Stocks' };
 
 export default async function StocksPage() {
   const stocks = await readStocksResponse();
-  return <StocksView initialStocks={stocks} />;
+  return <StocksView initialStocks={stocks ?? undefined} />;
 }

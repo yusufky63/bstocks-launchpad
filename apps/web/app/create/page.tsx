@@ -13,7 +13,7 @@ export default async function CreatePage() {
   return (
     <div className="flex flex-col gap-6">
       <PageTitle index="04 — Create" title="Create a stock-paired token" lead="Fill in the basics, pick the stock it trades against, confirm once in your wallet. The pool opens in the same transaction." />
-      <CreateForm initialStocks={stocks} />
+      <CreateForm initialStocks={stocks ?? undefined} />
     </div>
   );
 }

@@ -901,6 +901,42 @@ export type PlatformStatsRow = {
 };
 
 /** What the platform has done so far, every figure counted from confirmed events. */
+export type TopCreatorRow = {
+  creator: string;
+  tokens: number;
+  stock: string;
+  symbol: string;
+  decimals: number;
+  creator_raw: string;
+};
+
+/**
+ * Creators ranked by the fees their tokens have earned them, broken down per stock because fees are
+ * paid in the stock and a creator can have tokens against several. The caller converts to USD and
+ * sums; the row count is capped at a few per creator, so `limit` is a creator limit, not a row limit.
+ */
+export async function topCreatorsByFees(db: Db, limit = 10): Promise<TopCreatorRow[]> {
+  return db.query<TopCreatorRow>(
+    `WITH earned AS (
+       SELECT l.creator, f.stock, sum(f.creator_raw) AS creator_raw
+       FROM fee_events f JOIN launches l ON l.token = f.token
+       GROUP BY l.creator, f.stock
+     ),
+     ranked AS (
+       SELECT creator, sum(creator_raw) AS total_raw FROM earned GROUP BY creator
+       ORDER BY total_raw DESC LIMIT $1
+     )
+     SELECT e.creator, e.stock, s.symbol, s.decimals,
+            e.creator_raw::text AS creator_raw,
+            (SELECT count(*)::int FROM launches WHERE creator = e.creator) AS tokens
+     FROM earned e
+     JOIN ranked r ON r.creator = e.creator
+     JOIN stocks s ON s.address = e.stock
+     ORDER BY r.total_raw DESC, e.creator_raw DESC`,
+    [Math.min(Math.max(limit, 1), 50)],
+  );
+}
+
 export async function platformStats(db: Db): Promise<PlatformStatsRow> {
   const [head] = await db.query<{ launches: number; launches_24h: number; creators: number; first_launch_at: Date | null }>(
     `SELECT count(*)::int AS launches,

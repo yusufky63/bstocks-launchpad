@@ -35,9 +35,12 @@ export async function readWalletSummary(db: Db, wallet: string): Promise<WalletS
       readCreatorOverview(db, wallet),
       readStocksResponse(),
     ]);
-    const stockUsd = new Map(stocks.stocks.map((s) => [s.address, s.priceUsd]));
-    const stockSymbol = new Map(stocks.stocks.map((s) => [s.address, s.symbol]));
-    const stockDecimals = new Map(stocks.stocks.map((s) => [s.address, s.decimals]));
+    // Stock prices are a lookup here, not the subject: if the registry read timed out the wallet
+    // still renders, with USD figures falling back to null rather than the page failing.
+    const stockRows = stocks?.stocks ?? [];
+    const stockUsd = new Map(stockRows.map((s) => [s.address, s.priceUsd]));
+    const stockSymbol = new Map(stockRows.map((s) => [s.address, s.symbol]));
+    const stockDecimals = new Map(stockRows.map((s) => [s.address, s.decimals]));
 
     // Prices for held tokens (and for the trades list) come from the same market rows the lists use.
     const heldTokens = holdingRows.map((h) => h.token);

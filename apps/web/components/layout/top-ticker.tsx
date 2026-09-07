@@ -14,7 +14,7 @@ import type { MarketsResponse } from '@/lib/types';
  * Pure CSS animation, pauses on hover; the data is the same /api/markets object the pages read.
  */
 export function TopTicker({ initialMarkets }: { initialMarkets?: MarketsResponse }) {
-  const { data } = useMarkets({ limit: 40 }, initialMarkets, { refetchInterval: 30_000 });
+  const { data, isSuccess } = useMarkets({ limit: 40 }, initialMarkets, { refetchInterval: 30_000 });
   const markets = data?.markets ?? [];
   const cells = markets.map((m) => (
     <Link key={m.token} href={`/token/${m.token}`} className="inline-flex items-center gap-2 px-3 h-8 border-r border-line hover:text-primary transition-fast" title={`${m.name} · paired with ${m.stock.symbol}`}>
@@ -30,10 +30,13 @@ export function TopTicker({ initialMarkets }: { initialMarkets?: MarketsResponse
       <div className="border-b border-line flex items-stretch">
         {cells.length > 0 ? (
           <Track cells={cells} seconds={Math.max(40, cells.length * 6)} />
-        ) : (
+        ) : isSuccess ? (
+          // Only claim the board is empty once a read actually succeeded and came back with nothing.
           <Link href="/create" className="inline-flex items-center gap-2 px-3 h-8 text-ink-muted hover:text-primary transition-fast">
             No tokens yet · create the first one →
           </Link>
+        ) : (
+          <span className="inline-flex items-center px-3 h-8 text-ink-muted">Loading prices…</span>
         )}
       </div>
     </div>

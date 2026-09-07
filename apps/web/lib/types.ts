@@ -99,6 +99,9 @@ export type ActivityItem = {
 export type ActivityResponse = { items: ActivityItem[]; asOf: string };
 
 export type StockFigure = { stock: string; symbol: string; ticker: string; amount: number; usd: number | null };
+
+/** A creator ranked by what the swap fees on their tokens have paid them. */
+export type TopCreator = { creator: string; tokens: number; earnedUsd: number | null; byStock: StockFigure[] };
 export type StatsResponse = {
   launches: number;
   launches24h: number;
@@ -115,6 +118,7 @@ export type StatsResponse = {
   platformFeesUsd: number | null;
   volumeByStock: (StockFigure & { dayAmount: number; dayUsd: number | null })[];
   feesByStock: (StockFigure & { creatorAmount: number; platformAmount: number })[];
+  topCreators: TopCreator[];
   launchesByStock: { stock: string; symbol: string; launches: number }[];
   asOf: string;
 };

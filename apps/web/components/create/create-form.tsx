@@ -30,7 +30,7 @@ function randomSalt(): Hex {
   return `0x${Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')}`;
 }
 
-export function CreateForm({ initialStocks }: { initialStocks: StocksResponse }) {
+export function CreateForm({ initialStocks }: { initialStocks?: StocksResponse }) {
   const router = useRouter();
   const { address, isConnected, chainId } = useAccount();
   const client = usePublicClient({ chainId: base.id });

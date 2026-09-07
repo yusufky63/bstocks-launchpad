@@ -3,16 +3,27 @@
 import Link from 'next/link';
 
 import { StockTile, TokenLogo } from '@/components/stock/stock-coin';
-import { TimeAgo, TxLink } from '@/components/ui/display';
+import { Named, TimeAgo, TxLink } from '@/components/ui/display';
 import { Badge, Empty, KeyValue, Module, ModuleHeader, PageTitle, Skeleton, StatStrip, cx } from '@/components/ui/primitives';
 import { formatDateTime, formatNumber, formatUsd, shortAddress } from '@/lib/format';
 import { useActivity, useStats } from '@/lib/queries';
 import type { ActivityItem, ActivityResponse, StatsResponse } from '@/lib/types';
 
-export function StatsView({ initialStats, initialActivity }: { initialStats: StatsResponse; initialActivity: ActivityResponse }) {
-  const { data: stats } = useStats(initialStats);
+export function StatsView({ initialStats, initialActivity }: { initialStats?: StatsResponse; initialActivity?: ActivityResponse }) {
+  const { data: stats, isError: statsStale } = useStats(initialStats);
   const { data: activity } = useActivity({ limit: 60 }, initialActivity);
+  // React Query keeps the last successful data when a refetch fails, so a temporary outage leaves
+  // the real figures on screen; only a first load with nothing cached shows the skeleton.
   const s = stats ?? initialStats;
+  if (!s) {
+    return (
+      <div className="flex flex-col gap-5">
+        <PageTitle index="06 — Stats & activity" title="The launchpad so far" lead="Reading confirmed Base events…" />
+        <Skeleton className="h-20" />
+        <Skeleton className="h-64" />
+      </div>
+    );
+  }
   return (
     <div className="flex flex-col gap-5">
       <PageTitle
@@ -22,6 +33,7 @@ export function StatsView({ initialStats, initialActivity }: { initialStats: Sta
           <span className="inline-flex items-center gap-2 flex-wrap">
             <span className="live-dot" /> Every figure is counted from confirmed Base events · updated <TimeAgo value={s.asOf} placeholder="just now" />
             {s.firstLaunchAt && <> · first launch {formatDateTime(s.firstLaunchAt)}</>}
+            {statsStale && <span className="text-warning-fg"> · last known figures, refreshing</span>}
           </span>
         }
       />
@@ -36,7 +48,7 @@ export function StatsView({ initialStats, initialActivity }: { initialStats: Sta
           { label: 'Holders', value: formatNumber(s.holders, 0) },
           { label: 'Trades · all', value: formatNumber(s.swaps, 0) },
           { label: 'Volume · all', value: formatUsd(s.volumeUsd, { compact: true }) },
-          { label: 'Volume · 24h', value: formatUsd(s.volume24hUsd, { compact: true }) },
+          { label: 'Fees · creators', value: formatUsd(s.creatorFeesUsd, { compact: true }) },
         ]}
       />
 
@@ -73,10 +85,44 @@ export function StatsView({ initialStats, initialActivity }: { initialStats: Sta
             <div className="px-4 py-2">
               {s.feesByStock.length === 0 && <p className="py-2 text-[13px] text-ink-secondary">No fees yet.</p>}
               {s.feesByStock.map((f) => (
-                <KeyValue key={f.stock} k={<span className="inline-flex items-center gap-2"><StockTile ticker={f.ticker} size={16} className="rounded-[3px]" /> {f.symbol}</span>} v={`${formatNumber(f.amount, 6)} · ${formatUsd(f.usd)}`} />
+                <KeyValue
+                  key={f.stock}
+                  k={<span className="inline-flex items-center gap-2"><StockTile ticker={f.ticker} size={16} className="rounded-[3px]" /> {f.symbol}</span>}
+                  v={
+                    <span className="text-right">
+                      <span className="block">{formatNumber(f.amount, 6)} · {formatUsd(f.usd)}</span>
+                      <span className="block text-[11px] text-ink-muted">creator {formatNumber(f.creatorAmount, 6)} · platform {formatNumber(f.platformAmount, 6)}</span>
+                    </span>
+                  }
+                />
               ))}
             </div>
             <p className="px-4 py-2.5 border-t border-line text-[11px] text-ink-muted">1% of every swap, paid in the stock: 70% to the creator, 30% to the platform.</p>
+          </Module>
+
+          <Module ticks>
+            <ModuleHeader title="Top creators" action={<span className="font-mono text-[11px] text-ink-muted">by fees earned</span>} />
+            {s.topCreators.length === 0 ? (
+              <p className="px-4 py-4 text-[13px] text-ink-secondary">No creator has earned a fee yet. Fees start the first time someone swaps a launched token.</p>
+            ) : (
+              <div>
+                {s.topCreators.map((c, i) => (
+                  <div key={c.creator} className="rail flex items-center gap-3 px-4 py-2.5 border-b border-line last:border-b-0 hover:bg-surface transition-fast">
+                    <span className="font-mono num text-[12px] text-ink-muted w-5 shrink-0 text-right">{i + 1}</span>
+                    <span className="min-w-0 flex-1">
+                      <Link href={`/wallet/${c.creator}`} className="block font-mono text-[12px] hover:text-primary truncate">
+                        <Named address={c.creator} chars={6} />
+                      </Link>
+                      <span className="block font-mono text-[11px] text-ink-muted">
+                        {c.tokens} token{c.tokens === 1 ? '' : 's'} · {c.byStock.map((b) => b.symbol).join(', ')}
+                      </span>
+                    </span>
+                    <span className="display num text-[16px] leading-none text-positive-fg shrink-0">{formatUsd(c.earnedUsd, { compact: true })}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <p className="px-4 py-2.5 border-t border-line text-[11px] text-ink-muted">70% of every swap fee goes to the token's creator, paid in the stock it trades against.</p>
           </Module>
 
           <Module>

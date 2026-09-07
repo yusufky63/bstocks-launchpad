@@ -12,7 +12,7 @@ import { formatNumber, formatUsd } from '@/lib/format';
 import { useMarkets, useStats } from '@/lib/queries';
 import type { MarketView, MarketsResponse, StatsResponse } from '@/lib/types';
 
-export function HomeView({ initialMarkets, initialStats }: { initialMarkets: MarketsResponse; initialStats?: StatsResponse }) {
+export function HomeView({ initialMarkets, initialStats }: { initialMarkets?: MarketsResponse; initialStats?: StatsResponse }) {
   // Home opts out of the fast poll: the lists should stay still, not reshuffle under the reader.
   const { data: markets } = useMarkets({}, initialMarkets, { refetchInterval: 60_000 });
   const { data: stats } = useStats(initialStats);

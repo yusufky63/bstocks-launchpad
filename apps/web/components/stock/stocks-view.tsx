@@ -11,7 +11,7 @@ import type { StocksResponse } from '@/lib/types';
 
 import { StockTile } from './stock-coin';
 
-export function StocksView({ initialStocks }: { initialStocks: StocksResponse }) {
+export function StocksView({ initialStocks }: { initialStocks?: StocksResponse }) {
   const { data } = useStocks(initialStocks);
   // Issued stocks first; the ones Coinbase has not minted yet sink to the end.
   const stocks = [...(data?.stocks ?? [])].sort((a, b) => Number(b.enabled) - Number(a.enabled));
