@@ -16,6 +16,8 @@ export const publicEnv = {
   alchemyKey: process.env.NEXT_PUBLIC_ALCHEMY_API_KEY ?? '',
   /** WalletConnect (Reown) project id; when set it enables the mobile-wallet connector. */
   walletConnectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ?? '',
+  /** Base Builder Code (ERC-8021). The same code the trading app attributes to. */
+  builderCode: process.env.NEXT_PUBLIC_BASE_BUILDER_CODE || 'bc_71vd6x2w',
 } as const;
 
 export function requireDeployment(): StockPairDeployment {

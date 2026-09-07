@@ -15,6 +15,7 @@ import { StockCoin } from '@/components/stock/stock-coin';
 import { Input, TextArea } from '@/components/ui/controls';
 import { Banner, TxLink } from '@/components/ui/display';
 import { Button, KeyValue, Module, ModuleHeader, cx } from '@/components/ui/primitives';
+import { builderDataSuffix } from '@/lib/attribution';
 import { publicEnv } from '@/lib/env';
 import { formatNumber, formatUsd } from '@/lib/format';
 import { normalizeTwitter } from '@/lib/twitter';
@@ -107,6 +108,7 @@ export function CreateForm({ initialStocks }: { initialStocks?: StocksResponse }
         args: [{ name: name.trim(), symbol, contractURI: pinned.contractURI, stock: stock as Address, salt }],
         value: creationFee,
         chainId: base.id,
+        dataSuffix: builderDataSuffix(),
       });
       return { token: predicted, hash };
     },

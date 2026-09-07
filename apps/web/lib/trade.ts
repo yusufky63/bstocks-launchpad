@@ -3,6 +3,7 @@ import { base } from 'viem/chains';
 
 import { stockPairRouterAbi } from '@stockpair/core';
 
+import { attributionCapabilities, withAttribution } from './attribution';
 import type { QuoteView } from './types';
 
 export type TradeState = 'IDLE' | 'CHECKING' | 'APPROVAL' | 'AWAITING_WALLET' | 'SUBMITTED' | 'CONFIRMING' | 'CONFIRMED' | 'FAILED';
@@ -107,9 +108,10 @@ export async function executeSwap(
       chain: base,
       forceAtomic: true,
       calls: [
-        { to: params.inputToken, data: approveData },
-        { to: params.router, data: swapData },
+        { to: params.inputToken, data: withAttribution(approveData) },
+        { to: params.router, data: withAttribution(swapData) },
       ],
+      capabilities: { ...attributionCapabilities() },
     });
     hooks.onState?.('SUBMITTED');
     hooks.onSubmitted?.(undefined);
@@ -126,16 +128,17 @@ export async function executeSwap(
   hooks.onMode?.('sequential');
   if (needsApproval) {
     hooks.onState?.('APPROVAL');
-    const approveHash = await walletClient.sendTransaction({ account, chain: base, to: params.inputToken, data: approveData });
+    const approveHash = await walletClient.sendTransaction({ account, chain: base, to: params.inputToken, data: withAttribution(approveData) });
     hooks.onApproval?.(approveHash);
     const approveReceipt = await publicClient.waitForTransactionReceipt({ hash: approveHash });
     if (approveReceipt.status !== 'success') throw new Error('The approval reverted.');
   }
 
-  await simulateAfterApproval(publicClient, account, { to: params.router, data: swapData }, needsApproval ? 4 : 0);
+  // Simulate exactly what gets sent, suffix included.
+  await simulateAfterApproval(publicClient, account, { to: params.router, data: withAttribution(swapData) }, needsApproval ? 4 : 0);
 
   hooks.onState?.('AWAITING_WALLET');
-  const hash = await walletClient.sendTransaction({ account, chain: base, to: params.router, data: swapData });
+  const hash = await walletClient.sendTransaction({ account, chain: base, to: params.router, data: withAttribution(swapData) });
   hooks.onState?.('SUBMITTED');
   hooks.onSubmitted?.(hash);
   hooks.onState?.('CONFIRMING');

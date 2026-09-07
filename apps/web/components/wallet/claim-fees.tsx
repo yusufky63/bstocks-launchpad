@@ -12,6 +12,7 @@ import { stockPairHookAbi } from '@stockpair/core';
 import { StockTile } from '@/components/stock/stock-coin';
 import { Banner, TxLink } from '@/components/ui/display';
 import { Button } from '@/components/ui/primitives';
+import { builderDataSuffix } from '@/lib/attribution';
 import { publicEnv } from '@/lib/env';
 import { formatNumber, formatUsd } from '@/lib/format';
 import { describeTradeError } from '@/lib/trade';
@@ -38,6 +39,7 @@ export function ClaimFees({ wallet, claimable }: { wallet: string; claimable: Cl
         functionName: 'claimMany',
         args: [claimable.map((c) => c.stock as Address)],
         chainId: base.id,
+        dataSuffix: builderDataSuffix(),
       });
       setTxHash(hash);
       const receipt = await client.waitForTransactionReceipt({ hash });
