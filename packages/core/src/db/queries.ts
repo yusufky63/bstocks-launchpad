@@ -938,40 +938,42 @@ export async function topCreatorsByFees(db: Db, limit = 10): Promise<TopCreatorR
 }
 
 export async function platformStats(db: Db): Promise<PlatformStatsRow> {
-  const [head] = await db.query<{ launches: number; launches_24h: number; creators: number; first_launch_at: Date | null }>(
-    `SELECT count(*)::int AS launches,
-            count(*) FILTER (WHERE launched_at > now() - interval '24 hours')::int AS launches_24h,
-            count(DISTINCT creator)::int AS creators, min(launched_at) AS first_launch_at
-     FROM launches`,
+  // The database is remote, so what costs time here is round trips, not the aggregates themselves.
+  // The scalar rollups share one query and the groupings are issued together, turning six
+  // sequential trips into two.
+  const headRow = db.query<{ launches: number; launches_24h: number; creators: number; first_launch_at: Date | null; swaps: number; swaps_24h: number; traders: number; holders: number }>(
+    `SELECT (SELECT count(*) FROM launches)::int AS launches,
+            (SELECT count(*) FROM launches WHERE launched_at > now() - interval '24 hours')::int AS launches_24h,
+            (SELECT count(DISTINCT creator) FROM launches)::int AS creators,
+            (SELECT min(launched_at) FROM launches) AS first_launch_at,
+            (SELECT count(*) FROM swaps)::int AS swaps,
+            (SELECT count(*) FROM swaps WHERE block_time > now() - interval '24 hours')::int AS swaps_24h,
+            (SELECT count(DISTINCT trader) FROM swaps)::int AS traders,
+            (SELECT count(*) FROM balances
+              WHERE balance_raw > 0 AND holder <> '0x000000000000000000000000000000000000dead')::int AS holders`,
   );
-  const [trading] = await db.query<{ swaps: number; swaps_24h: number; traders: number }>(
-    `SELECT count(*)::int AS swaps,
-            count(*) FILTER (WHERE block_time > now() - interval '24 hours')::int AS swaps_24h,
-            count(DISTINCT trader)::int AS traders
-     FROM swaps`,
-  );
-  const [holders] = await db.query<{ holders: number }>(
-    `SELECT count(*)::int AS holders FROM balances
-     WHERE balance_raw > 0 AND holder <> '0x000000000000000000000000000000000000dead'`,
-  );
-  const volume = await db.query<StockAmountRow & { day_raw: string }>(
+  const volumeRows = db.query<StockAmountRow & { day_raw: string }>(
     `SELECT l.stock, st.symbol, st.decimals,
             coalesce(sum(s.amount_stock_raw), 0)::numeric(40,0)::text AS amount_raw,
             coalesce(sum(s.amount_stock_raw) FILTER (WHERE s.block_time > now() - interval '24 hours'), 0)::numeric(40,0)::text AS day_raw
      FROM launches l JOIN stocks st ON st.address = l.stock LEFT JOIN swaps s ON s.token = l.token
      GROUP BY l.stock, st.symbol, st.decimals`,
   );
-  const fees = await db.query<StockAmountRow & { creator_raw: string; platform_raw: string }>(
+  const feeRows = db.query<StockAmountRow & { creator_raw: string; platform_raw: string }>(
     `SELECT f.stock, st.symbol, st.decimals,
             sum(f.amount_raw)::numeric(40,0)::text AS amount_raw,
             sum(f.creator_raw)::numeric(40,0)::text AS creator_raw,
             sum(f.platform_raw)::numeric(40,0)::text AS platform_raw
      FROM fee_events f JOIN stocks st ON st.address = f.stock GROUP BY f.stock, st.symbol, st.decimals`,
   );
-  const launches = await db.query<{ stock: string; symbol: string; launches: number }>(
+  const launchRows = db.query<{ stock: string; symbol: string; launches: number }>(
     `SELECT l.stock, st.symbol, count(*)::int AS launches FROM launches l JOIN stocks st ON st.address = l.stock
      GROUP BY l.stock, st.symbol ORDER BY launches DESC`,
   );
+  const [scalars, volume, fees, launches] = await Promise.all([headRow, volumeRows, feeRows, launchRows]);
+  const head = scalars[0];
+  const trading = head;
+  const holders = head;
   return {
     launches: head?.launches ?? 0,
     launches_24h: head?.launches_24h ?? 0,

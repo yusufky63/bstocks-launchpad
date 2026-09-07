@@ -64,6 +64,15 @@ export function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Pr
 /** How long a server component may wait for initial data before rendering an empty shell. */
 export const RENDER_BUDGET_MS = 7_000;
 
+/**
+ * How long an API route may wait. It is larger than the render budget on purpose: a page render
+ * blocks what the visitor sees, while an API call is a background poll whose client keeps showing
+ * the last good data. The database is in another region, so a cold serverless instance pays a TLS
+ * handshake plus a round trip per query before any work happens, and cutting that off at the render
+ * budget turns a slow answer into no answer.
+ */
+export const API_BUDGET_MS = 9_000;
+
 export const TTL = {
   /** Lists that refresh with every indexer tick. */
   list: 5_000,

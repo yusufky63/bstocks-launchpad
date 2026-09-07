@@ -5,6 +5,8 @@ import { getDb } from '@/lib/db.server';
 import { readActivity } from '@/lib/stats.server';
 
 export const dynamic = 'force-dynamic';
+// The database is in another region; a cold instance needs room for the handshake and the reads.
+export const maxDuration = 15;
 
 const querySchema = z.object({ limit: limitSchema, token: z.string().optional(), actor: z.string().optional() });
 

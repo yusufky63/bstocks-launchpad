@@ -3,7 +3,7 @@ import 'server-only';
 import { findStock } from '@stockpair/core';
 import { creatorOverview, listActivity, listStocks, platformStats, topCreatorsByFees, type Db } from '@stockpair/core/db';
 
-import { cached, RENDER_BUDGET_MS, TTL, withTimeout } from './cache.server';
+import { API_BUDGET_MS, cached, TTL, withTimeout } from './cache.server';
 import { ipfsToHttp } from './env';
 import type { ActivityResponse, CreatorOverview, StatsResponse, StockFigure, TopCreator } from './types';
 
@@ -81,7 +81,7 @@ export async function readStats(db: Db): Promise<StatsResponse | null> {
       asOf: new Date().toISOString(),
     };
     }),
-    RENDER_BUDGET_MS,
+    API_BUDGET_MS,
     null,
   );
 }
@@ -116,7 +116,7 @@ export async function readActivity(db: Db, options: { limit?: number; token?: st
       asOf: new Date().toISOString(),
     };
     }),
-    RENDER_BUDGET_MS,
+    API_BUDGET_MS,
     null,
   );
 }

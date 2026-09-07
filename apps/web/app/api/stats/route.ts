@@ -3,6 +3,8 @@ import { getDb } from '@/lib/db.server';
 import { readStats } from '@/lib/stats.server';
 
 export const dynamic = 'force-dynamic';
+// The database is in another region; a cold instance needs room for the handshake and the reads.
+export const maxDuration = 15;
 
 /** Platform totals: launches, traders, volume and fees, every figure counted from confirmed events. */
 export async function GET(): Promise<Response> {
