@@ -133,16 +133,62 @@ export async function writeCursor(db: Db, nextBlock: bigint, lastBlockHash: stri
   );
 }
 
-export async function upsertBlock(
-  db: Db,
-  block: { number: bigint; hash: string; parentHash: string; timestamp: Date },
-) {
-  await db.query(
-    `INSERT INTO blocks (number, hash, parent_hash, timestamp) VALUES ($1, $2, $3, $4)
-     ON CONFLICT (number) DO UPDATE SET hash = EXCLUDED.hash, parent_hash = EXCLUDED.parent_hash,
-       timestamp = EXCLUDED.timestamp`,
-    [block.number.toString(), block.hash, block.parentHash, block.timestamp],
-  );
+// ---------------------------------------------------------------------------------------------
+// Batched writes
+//
+// A sync pass over a busy block range holds thousands of rows, and one round trip per row is the
+// whole cost of the pass once the database is a network hop away. Every writer below takes a list
+// and sends one statement per chunk; the single-row versions stay as thin wrappers.
+// ---------------------------------------------------------------------------------------------
+
+/** Postgres allows 65535 bind parameters per statement; stay well under it. */
+const MAX_BIND_PARAMS = 30_000;
+
+function chunked<T>(rows: readonly T[], columns: number): T[][] {
+  if (rows.length === 0) return [];
+  const size = Math.max(1, Math.floor(MAX_BIND_PARAMS / columns));
+  if (rows.length <= size) return [rows as T[]];
+  const out: T[][] = [];
+  for (let i = 0; i < rows.length; i += size) out.push(rows.slice(i, i + size) as T[]);
+  return out;
+}
+
+/** `($1,$2),($3,$4)…` for `rowCount` rows of `columns` each. */
+function placeholders(rowCount: number, columns: number, casts?: readonly string[]): string {
+  const rows: string[] = [];
+  let n = 0;
+  for (let r = 0; r < rowCount; r += 1) {
+    const cells: string[] = [];
+    for (let c = 0; c < columns; c += 1) {
+      n += 1;
+      // A cast on the first row fixes the column type for the whole VALUES list, which a bare
+      // VALUES source in UPDATE ... FROM has no other way to learn.
+      cells.push(casts && r === 0 ? `$${n}::${casts[c]}` : `$${n}`);
+    }
+    rows.push(`(${cells.join(',')})`);
+  }
+  return rows.join(',');
+}
+
+export type BlockInsert = { number: bigint; hash: string; parentHash: string; timestamp: Date };
+
+export async function upsertBlocks(db: Db, blocks: readonly BlockInsert[]) {
+  // ON CONFLICT DO UPDATE may affect a row only once per statement, so collapse repeats first.
+  const unique = new Map<string, BlockInsert>();
+  for (const block of blocks) unique.set(block.number.toString(), block);
+  for (const chunk of chunked([...unique.values()], 4)) {
+    await db.query(
+      `INSERT INTO blocks (number, hash, parent_hash, timestamp)
+       VALUES ${placeholders(chunk.length, 4)}
+       ON CONFLICT (number) DO UPDATE SET hash = EXCLUDED.hash, parent_hash = EXCLUDED.parent_hash,
+         timestamp = EXCLUDED.timestamp`,
+      chunk.flatMap((b) => [b.number.toString(), b.hash, b.parentHash, b.timestamp]),
+    );
+  }
+}
+
+export async function upsertBlock(db: Db, block: BlockInsert) {
+  await upsertBlocks(db, [block]);
 }
 
 export async function readBlockHash(db: Db, number: bigint): Promise<string | null> {
@@ -173,34 +219,40 @@ export type LaunchInsert = {
   launchedAt: Date;
 };
 
+export async function insertLaunches(db: Db, launches: readonly LaunchInsert[]) {
+  for (const chunk of chunked(launches, 18)) {
+    await db.query(
+      `INSERT INTO launches (token, stock, creator, pool_id, token_is_currency0, name, symbol,
+         contract_uri, opening_sqrt_price_x96, tick_lower, tick_upper, liquidity,
+         stock_usd8_at_launch, block_number, block_hash, tx_hash, log_index, launched_at)
+       VALUES ${placeholders(chunk.length, 18)}
+       ON CONFLICT (token) DO NOTHING`,
+      chunk.flatMap((l) => [
+        l.token.toLowerCase(),
+        l.stock.toLowerCase(),
+        l.creator.toLowerCase(),
+        l.poolId.toLowerCase(),
+        l.tokenIsCurrency0,
+        l.name,
+        l.symbol,
+        l.contractUri,
+        l.openingSqrtPriceX96.toString(),
+        l.tickLower,
+        l.tickUpper,
+        l.liquidity.toString(),
+        l.stockUsd8.toString(),
+        l.blockNumber.toString(),
+        l.blockHash,
+        l.txHash,
+        l.logIndex,
+        l.launchedAt,
+      ]),
+    );
+  }
+}
+
 export async function insertLaunch(db: Db, l: LaunchInsert) {
-  await db.query(
-    `INSERT INTO launches (token, stock, creator, pool_id, token_is_currency0, name, symbol,
-       contract_uri, opening_sqrt_price_x96, tick_lower, tick_upper, liquidity,
-       stock_usd8_at_launch, block_number, block_hash, tx_hash, log_index, launched_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
-     ON CONFLICT (token) DO NOTHING`,
-    [
-      l.token.toLowerCase(),
-      l.stock.toLowerCase(),
-      l.creator.toLowerCase(),
-      l.poolId.toLowerCase(),
-      l.tokenIsCurrency0,
-      l.name,
-      l.symbol,
-      l.contractUri,
-      l.openingSqrtPriceX96.toString(),
-      l.tickLower,
-      l.tickUpper,
-      l.liquidity.toString(),
-      l.stockUsd8.toString(),
-      l.blockNumber.toString(),
-      l.blockHash,
-      l.txHash,
-      l.logIndex,
-      l.launchedAt,
-    ],
-  );
+  await insertLaunches(db, [l]);
 }
 
 export async function updateLaunchMetadata(
@@ -235,40 +287,71 @@ export type SwapInsert = {
   blockTime: Date;
 };
 
+export async function insertSwaps(db: Db, swaps: readonly SwapInsert[]) {
+  for (const chunk of chunked(swaps, 17)) {
+    await db.query(
+      `INSERT INTO swaps (tx_hash, log_index, token, pool_id, side, sender, trader,
+         amount_token_raw, amount_stock_raw, price_token_in_stock, sqrt_price_x96, liquidity, tick,
+         fee_stock_raw, block_number, block_hash, block_time)
+       VALUES ${placeholders(chunk.length, 17)}
+       ON CONFLICT (tx_hash, log_index) DO NOTHING`,
+      chunk.flatMap((s) => [
+        s.txHash,
+        s.logIndex,
+        s.token.toLowerCase(),
+        s.poolId.toLowerCase(),
+        s.side,
+        s.sender.toLowerCase(),
+        s.trader?.toLowerCase() ?? null,
+        s.amountTokenRaw.toString(),
+        s.amountStockRaw.toString(),
+        s.priceTokenInStock,
+        s.sqrtPriceX96.toString(),
+        s.liquidity.toString(),
+        s.tick,
+        s.feeStockRaw.toString(),
+        s.blockNumber.toString(),
+        s.blockHash,
+        s.blockTime,
+      ]),
+    );
+  }
+}
+
 export async function insertSwap(db: Db, s: SwapInsert) {
-  await db.query(
-    `INSERT INTO swaps (tx_hash, log_index, token, pool_id, side, sender, trader,
-       amount_token_raw, amount_stock_raw, price_token_in_stock, sqrt_price_x96, liquidity, tick,
-       fee_stock_raw, block_number, block_hash, block_time)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
-     ON CONFLICT (tx_hash, log_index) DO NOTHING`,
-    [
-      s.txHash,
-      s.logIndex,
-      s.token.toLowerCase(),
-      s.poolId.toLowerCase(),
-      s.side,
-      s.sender.toLowerCase(),
-      s.trader?.toLowerCase() ?? null,
-      s.amountTokenRaw.toString(),
-      s.amountStockRaw.toString(),
-      s.priceTokenInStock,
-      s.sqrtPriceX96.toString(),
-      s.liquidity.toString(),
-      s.tick,
-      s.feeStockRaw.toString(),
-      s.blockNumber.toString(),
-      s.blockHash,
-      s.blockTime,
-    ],
-  );
+  await insertSwaps(db, [s]);
+}
+
+/**
+ * Adds hook fees onto the swaps they belong to. A transaction can carry several FeeCharged logs
+ * for one pool, so the amounts are summed before the join — matching what repeated single-row
+ * updates produced, in one statement.
+ */
+export async function addSwapFees(
+  db: Db,
+  fees: readonly { txHash: string; poolId: string; feeStockRaw: bigint }[],
+) {
+  const totals = new Map<string, { txHash: string; poolId: string; amount: bigint }>();
+  for (const fee of fees) {
+    const poolId = fee.poolId.toLowerCase();
+    const key = `${fee.txHash}|${poolId}`;
+    const current = totals.get(key);
+    if (current) current.amount += fee.feeStockRaw;
+    else totals.set(key, { txHash: fee.txHash, poolId, amount: fee.feeStockRaw });
+  }
+  for (const chunk of chunked([...totals.values()], 3)) {
+    await db.query(
+      `UPDATE swaps s SET fee_stock_raw = s.fee_stock_raw + v.fee
+       FROM (VALUES ${placeholders(chunk.length, 3, ['text', 'text', 'numeric'])})
+         AS v(tx_hash, pool_id, fee)
+       WHERE s.tx_hash = v.tx_hash AND s.pool_id = v.pool_id`,
+      chunk.flatMap((f) => [f.txHash, f.poolId, f.amount.toString()]),
+    );
+  }
 }
 
 export async function setSwapFee(db: Db, txHash: string, poolId: string, feeStockRaw: bigint) {
-  await db.query(
-    `UPDATE swaps SET fee_stock_raw = fee_stock_raw + $3 WHERE tx_hash = $1 AND pool_id = $2`,
-    [txHash, poolId.toLowerCase(), feeStockRaw.toString()],
-  );
+  await addSwapFees(db, [{ txHash, poolId, feeStockRaw }]);
 }
 
 export type TransferInsert = {
@@ -282,24 +365,67 @@ export type TransferInsert = {
   blockTime: Date;
 };
 
+/** Returns the transfers that were new, so balances are only moved once per log. */
+export async function insertTransfers(
+  db: Db,
+  transfers: readonly TransferInsert[],
+): Promise<TransferInsert[]> {
+  const inserted: TransferInsert[] = [];
+  for (const chunk of chunked(transfers, 8)) {
+    const returned = await db.query<{ tx_hash: string; log_index: number | string }>(
+      `INSERT INTO transfers (tx_hash, log_index, token, from_address, to_address, amount_raw,
+         block_number, block_time)
+       VALUES ${placeholders(chunk.length, 8)}
+       ON CONFLICT (tx_hash, log_index) DO NOTHING RETURNING tx_hash, log_index`,
+      chunk.flatMap((t) => [
+        t.txHash,
+        t.logIndex,
+        t.token.toLowerCase(),
+        t.from.toLowerCase(),
+        t.to.toLowerCase(),
+        t.amountRaw.toString(),
+        t.blockNumber.toString(),
+        t.blockTime,
+      ]),
+    );
+    const fresh = new Set(returned.map((row) => `${row.tx_hash}|${Number(row.log_index)}`));
+    for (const t of chunk) if (fresh.has(`${t.txHash}|${t.logIndex}`)) inserted.push(t);
+  }
+  return inserted;
+}
+
 export async function insertTransfer(db: Db, t: TransferInsert): Promise<boolean> {
-  const rows = await db.query(
-    `INSERT INTO transfers (tx_hash, log_index, token, from_address, to_address, amount_raw,
-       block_number, block_time)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-     ON CONFLICT (tx_hash, log_index) DO NOTHING RETURNING tx_hash`,
-    [
-      t.txHash,
-      t.logIndex,
-      t.token.toLowerCase(),
-      t.from.toLowerCase(),
-      t.to.toLowerCase(),
-      t.amountRaw.toString(),
-      t.blockNumber.toString(),
-      t.blockTime,
-    ],
-  );
-  return rows.length > 0;
+  return (await insertTransfers(db, [t])).length > 0;
+}
+
+export type BalanceDelta = { token: string; holder: string; delta: bigint; blockNumber: bigint };
+
+export async function applyBalanceDeltas(db: Db, deltas: readonly BalanceDelta[]) {
+  // ON CONFLICT DO UPDATE may affect a row only once per statement, so fold a holder's moves
+  // within this pass into a single delta and keep the highest block it was seen at.
+  const totals = new Map<string, BalanceDelta>();
+  for (const d of deltas) {
+    const token = d.token.toLowerCase();
+    const holder = d.holder.toLowerCase();
+    const key = `${token}|${holder}`;
+    const current = totals.get(key);
+    if (current) {
+      current.delta += d.delta;
+      if (d.blockNumber > current.blockNumber) current.blockNumber = d.blockNumber;
+    } else {
+      totals.set(key, { token, holder, delta: d.delta, blockNumber: d.blockNumber });
+    }
+  }
+  for (const chunk of chunked([...totals.values()], 4)) {
+    await db.query(
+      `INSERT INTO balances (token, holder, balance_raw, updated_block)
+       VALUES ${placeholders(chunk.length, 4)}
+       ON CONFLICT (token, holder) DO UPDATE SET
+         balance_raw = balances.balance_raw + EXCLUDED.balance_raw,
+         updated_block = EXCLUDED.updated_block`,
+      chunk.flatMap((d) => [d.token, d.holder, d.delta.toString(), d.blockNumber.toString()]),
+    );
+  }
 }
 
 export async function applyBalanceDelta(
@@ -309,13 +435,7 @@ export async function applyBalanceDelta(
   delta: bigint,
   blockNumber: bigint,
 ) {
-  await db.query(
-    `INSERT INTO balances (token, holder, balance_raw, updated_block) VALUES ($1, $2, $3, $4)
-     ON CONFLICT (token, holder) DO UPDATE SET
-       balance_raw = balances.balance_raw + EXCLUDED.balance_raw,
-       updated_block = EXCLUDED.updated_block`,
-    [token.toLowerCase(), holder.toLowerCase(), delta.toString(), blockNumber.toString()],
-  );
+  await applyBalanceDeltas(db, [{ token, holder, delta, blockNumber }]);
 }
 
 export type FeeEventInsert = {
@@ -332,72 +452,104 @@ export type FeeEventInsert = {
   blockTime: Date;
 };
 
+export async function insertFeeEvents(db: Db, fees: readonly FeeEventInsert[]) {
+  for (const chunk of chunked(fees, 11)) {
+    await db.query(
+      `INSERT INTO fee_events (tx_hash, log_index, pool_id, token, stock, amount_raw, creator_raw,
+         platform_raw, fee_bps, block_number, block_time)
+       VALUES ${placeholders(chunk.length, 11)}
+       ON CONFLICT (tx_hash, log_index) DO NOTHING`,
+      chunk.flatMap((f) => [
+        f.txHash,
+        f.logIndex,
+        f.poolId.toLowerCase(),
+        f.token.toLowerCase(),
+        f.stock.toLowerCase(),
+        f.amountRaw.toString(),
+        f.creatorRaw.toString(),
+        f.platformRaw.toString(),
+        f.feeBps,
+        f.blockNumber.toString(),
+        f.blockTime,
+      ]),
+    );
+  }
+}
+
 export async function insertFeeEvent(db: Db, f: FeeEventInsert) {
-  await db.query(
-    `INSERT INTO fee_events (tx_hash, log_index, pool_id, token, stock, amount_raw, creator_raw,
-       platform_raw, fee_bps, block_number, block_time)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-     ON CONFLICT (tx_hash, log_index) DO NOTHING`,
-    [
-      f.txHash,
-      f.logIndex,
-      f.poolId.toLowerCase(),
-      f.token.toLowerCase(),
-      f.stock.toLowerCase(),
-      f.amountRaw.toString(),
-      f.creatorRaw.toString(),
-      f.platformRaw.toString(),
-      f.feeBps,
-      f.blockNumber.toString(),
-      f.blockTime,
-    ],
-  );
+  await insertFeeEvents(db, [f]);
 }
 
-export async function insertFeeClaim(
+export type FeeClaimInsert = {
+  txHash: string;
+  logIndex: number;
+  stock: string;
+  account: string;
+  amountRaw: bigint;
+  blockNumber: bigint;
+  blockTime: Date;
+};
+
+export async function insertFeeClaims(db: Db, claims: readonly FeeClaimInsert[]) {
+  for (const chunk of chunked(claims, 7)) {
+    await db.query(
+      `INSERT INTO fee_claims (tx_hash, log_index, stock, account, amount_raw, block_number, block_time)
+       VALUES ${placeholders(chunk.length, 7)}
+       ON CONFLICT (tx_hash, log_index) DO NOTHING`,
+      chunk.flatMap((c) => [
+        c.txHash,
+        c.logIndex,
+        c.stock.toLowerCase(),
+        c.account.toLowerCase(),
+        c.amountRaw.toString(),
+        c.blockNumber.toString(),
+        c.blockTime,
+      ]),
+    );
+  }
+}
+
+export async function insertFeeClaim(db: Db, c: FeeClaimInsert) {
+  await insertFeeClaims(db, [c]);
+}
+
+/**
+ * Rebuilds one-minute candles from the swaps table. The join drops buckets that hold no swaps,
+ * so a bucket that ends up empty is left alone rather than written as a zero row.
+ */
+export async function rebuildCandles(
   db: Db,
-  c: {
-    txHash: string;
-    logIndex: number;
-    stock: string;
-    account: string;
-    amountRaw: bigint;
-    blockNumber: bigint;
-    blockTime: Date;
-  },
+  buckets: readonly { token: string; bucket: Date }[],
 ) {
-  await db.query(
-    `INSERT INTO fee_claims (tx_hash, log_index, stock, account, amount_raw, block_number, block_time)
-     VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (tx_hash, log_index) DO NOTHING`,
-    [
-      c.txHash,
-      c.logIndex,
-      c.stock.toLowerCase(),
-      c.account.toLowerCase(),
-      c.amountRaw.toString(),
-      c.blockNumber.toString(),
-      c.blockTime,
-    ],
-  );
+  const unique = new Map<string, { token: string; bucket: Date }>();
+  for (const entry of buckets) {
+    const token = entry.token.toLowerCase();
+    unique.set(`${token}|${entry.bucket.toISOString()}`, { token, bucket: entry.bucket });
+  }
+  for (const chunk of chunked([...unique.values()], 2)) {
+    await db.query(
+      `INSERT INTO candles (token, bucket, open, high, low, close, volume_stock_raw,
+         volume_token_raw, trade_count)
+       SELECT b.token, b.bucket,
+         (array_agg(s.price_token_in_stock ORDER BY s.block_number, s.log_index))[1],
+         max(s.price_token_in_stock), min(s.price_token_in_stock),
+         (array_agg(s.price_token_in_stock ORDER BY s.block_number DESC, s.log_index DESC))[1],
+         sum(s.amount_stock_raw), sum(s.amount_token_raw), count(*)::int
+       FROM (VALUES ${placeholders(chunk.length, 2, ['text', 'timestamptz'])})
+         AS b(token, bucket)
+       JOIN swaps s ON s.token = b.token
+         AND s.block_time >= b.bucket AND s.block_time < b.bucket + interval '1 minute'
+       GROUP BY b.token, b.bucket
+       ON CONFLICT (token, bucket) DO UPDATE SET open = EXCLUDED.open, high = EXCLUDED.high,
+         low = EXCLUDED.low, close = EXCLUDED.close, volume_stock_raw = EXCLUDED.volume_stock_raw,
+         volume_token_raw = EXCLUDED.volume_token_raw, trade_count = EXCLUDED.trade_count`,
+      chunk.flatMap((entry) => [entry.token, entry.bucket]),
+    );
+  }
 }
 
-/** Rebuilds the one-minute candle for a token/bucket from the swaps table. */
 export async function rebuildCandle(db: Db, token: string, bucket: Date) {
-  await db.query(
-    `INSERT INTO candles (token, bucket, open, high, low, close, volume_stock_raw, volume_token_raw, trade_count)
-     SELECT $1, $2,
-       (array_agg(price_token_in_stock ORDER BY block_number, log_index))[1],
-       max(price_token_in_stock), min(price_token_in_stock),
-       (array_agg(price_token_in_stock ORDER BY block_number DESC, log_index DESC))[1],
-       sum(amount_stock_raw), sum(amount_token_raw), count(*)::int
-     FROM swaps
-     WHERE token = $1 AND block_time >= $2 AND block_time < $2::timestamptz + interval '1 minute'
-     HAVING count(*) > 0
-     ON CONFLICT (token, bucket) DO UPDATE SET open = EXCLUDED.open, high = EXCLUDED.high,
-       low = EXCLUDED.low, close = EXCLUDED.close, volume_stock_raw = EXCLUDED.volume_stock_raw,
-       volume_token_raw = EXCLUDED.volume_token_raw, trade_count = EXCLUDED.trade_count`,
-    [token.toLowerCase(), bucket],
-  );
+  await rebuildCandles(db, [{ token, bucket }]);
 }
 
 export async function upsertStockQuote(

@@ -47,6 +47,19 @@ class FakeChain implements ChainReader {
   senders = new Map<Hex, Address>();
   feeds = new Map<string, { answer: bigint; updatedAt: bigint }>();
 
+  /** Highest number of reads of each kind the indexer had outstanding at once. */
+  peak = { block: 0, sender: 0 };
+  private open = { block: 0, sender: 0 };
+
+  /** Suspends once so overlapping reads are visible in `peak` the way a real transport sees them. */
+  private async gate<T>(kind: 'block' | 'sender', value: T): Promise<T> {
+    this.open[kind] += 1;
+    this.peak[kind] = Math.max(this.peak[kind], this.open[kind]);
+    await Promise.resolve();
+    this.open[kind] -= 1;
+    return value;
+  }
+
   hashOf(number: bigint): Hex {
     return keccak256(toHex(`block-${number}-${this.hashSalt.get(number) ?? ''}`));
   }
@@ -56,12 +69,12 @@ class FakeChain implements ChainReader {
   }
 
   async getBlock(number: bigint): Promise<Block> {
-    return {
+    return this.gate('block', {
       number,
       hash: this.hashOf(number),
       parentHash: this.hashOf(number - 1n),
       timestamp: 1_757_000_000n + number * 2n,
-    };
+    });
   }
 
   async getLogs(filter: { address?: Address | Address[]; topics?: (Hex | Hex[] | null)[]; fromBlock: bigint; toBlock: bigint }) {
@@ -90,7 +103,7 @@ class FakeChain implements ChainReader {
   }
 
   async getTransactionSender(hash: Hex) {
-    return this.senders.get(hash) ?? null;
+    return this.gate('sender', this.senders.get(hash) ?? null);
   }
 
   enabledOverrides = new Map<string, boolean>();
@@ -269,6 +282,27 @@ describe('syncOnce', () => {
     const holders = await listHolders(db, TOKEN);
     expect(holders.find((h) => h.holder === TRADER)?.balance_raw).toBe((5n * 10n ** 23n).toString());
     expect((await readCursor(db))?.last_block_hash).toBe(chain.hashOf(1_034n));
+  });
+
+  it('reads a busy range\'s blocks and senders together instead of one at a time', async () => {
+    // A range whose every block carries a trade: read serially this is one round trip per block
+    // plus one per transaction, which is what put the indexer behind the chain.
+    for (let i = 0; i < 30; i += 1) {
+      const block = 1_035n + BigInt(i);
+      const tx = `0xdddd${i.toString(16).padStart(60, '0')}` as Hex;
+      chain.add(block, feeLog(1_000n, tx, 0));
+      chain.add(block, swapLog(...amounts(10n ** 20n, -1_000_000n), OPENING_SQRT + BigInt(i), tx, 1));
+      chain.add(block, transferLog(TOKEN, BASE_CONTRACTS.poolManager, TRADER, 10n ** 20n, tx, 2));
+      chain.senders.set(tx, TRADER);
+    }
+    chain.head = 1_075n;
+    chain.peak = { block: 0, sender: 0 };
+
+    const result = await sync();
+    expect(result).toMatchObject({ status: 'progressed', fromBlock: 1_035n, swaps: 30, transfers: 30 });
+    // 30 blocks and 30 transactions, all in flight at once rather than 60 sequential waits.
+    expect(chain.peak.block).toBeGreaterThanOrEqual(30);
+    expect(chain.peak.sender).toBe(30);
   });
 });
 

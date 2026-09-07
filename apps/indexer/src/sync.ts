@@ -16,20 +16,26 @@ import {
   type StockPairDeployment,
 } from '@stockpair/core';
 import {
-  applyBalanceDelta,
-  insertFeeClaim,
-  insertFeeEvent,
-  insertLaunch,
-  insertSwap,
-  insertTransfer,
+  addSwapFees,
+  applyBalanceDeltas,
+  insertFeeClaims,
+  insertFeeEvents,
+  insertLaunches,
+  insertSwaps,
+  insertTransfers,
   readBlockHash,
   readCursor,
-  rebuildCandle,
+  rebuildCandles,
   rollbackFrom,
-  setSwapFee,
-  upsertBlock,
+  upsertBlocks,
   writeCursor,
+  type BalanceDelta,
   type Db,
+  type FeeClaimInsert,
+  type FeeEventInsert,
+  type LaunchInsert,
+  type SwapInsert,
+  type TransferInsert,
 } from '@stockpair/core/db';
 
 import type { ChainReader } from './chain-reader';
@@ -69,6 +75,22 @@ async function loadPools(db: Db): Promise<Map<string, PoolInfo>> {
     });
   }
   return pools;
+}
+
+/** How many RPC reads may be outstanding at once; the transport batches whatever overlaps. */
+const RPC_CONCURRENCY = 100;
+
+/**
+ * Reads every item with a bounded number of requests in flight, in input order. A range with real
+ * volume references hundreds of blocks and swap transactions, and asking for them one at a time is
+ * hundreds of round trips before a single row is written.
+ */
+async function inFlight<T, R>(items: readonly T[], read: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = [];
+  for (let i = 0; i < items.length; i += RPC_CONCURRENCY) {
+    out.push(...(await Promise.all(items.slice(i, i + RPC_CONCURRENCY).map((item) => read(item)))));
+  }
+  return out;
 }
 
 /** One bounded synchronisation step. Safe to call repeatedly; never processes unconfirmed blocks. */
@@ -146,154 +168,176 @@ export async function syncOnce(options: SyncOptions): Promise<SyncResult> {
     if (l.blockNumber !== null) blockNumbers.add(l.blockNumber);
   }
   const blocks = new Map<bigint, { number: bigint; hash: Hex; parentHash: Hex; timestamp: bigint }>();
-  for (const number of blockNumbers) blocks.set(number, await chain.getBlock(number));
+  for (const block of await inFlight([...blockNumbers], (number) => chain.getBlock(number))) {
+    blocks.set(block.number, block);
+  }
   const blockTime = (number: bigint) => new Date(Number(blocks.get(number)!.timestamp) * 1000);
 
   // 4. Transaction senders for swaps.
+  const swapTxHashes = [...new Set(swapLogs.map((l) => l.transactionHash).filter((h): h is Hex => h !== null))];
   const senders = new Map<Hex, Address | null>();
-  for (const l of swapLogs) {
-    if (l.transactionHash && !senders.has(l.transactionHash)) {
-      senders.set(l.transactionHash, await chain.getTransactionSender(l.transactionHash));
+  const senderResults = await inFlight(swapTxHashes, (hash) => chain.getTransactionSender(hash));
+  swapTxHashes.forEach((hash, i) => senders.set(hash, senderResults[i] ?? null));
+
+  // 5. Everything the range holds, decoded into rows first so each table is written in one
+  //    statement. A busy range carries thousands of rows and a round trip per row is what the
+  //    database link, not Postgres, charges for.
+  const blockRows = [...blocks.values()].map((block) => ({
+    number: block.number,
+    hash: block.hash,
+    parentHash: block.parentHash,
+    timestamp: new Date(Number(block.timestamp) * 1000),
+  }));
+
+  const launchRows: LaunchInsert[] = [];
+  for (const { log: raw, event } of launchedLogs) {
+    const pool = pools.get(event.poolId.toLowerCase());
+    if (!pool || raw.blockNumber === null || raw.transactionHash === null || raw.logIndex === null) continue;
+    launchRows.push({
+      token: event.token,
+      stock: event.stock,
+      creator: event.creator,
+      poolId: event.poolId,
+      tokenIsCurrency0: pool.tokenIsCurrency0,
+      name: event.name,
+      symbol: event.symbol,
+      contractUri: event.contractURI,
+      openingSqrtPriceX96: event.sqrtPriceX96,
+      tickLower: event.tickLower,
+      tickUpper: event.tickUpper,
+      liquidity: event.liquidity,
+      stockUsd8: event.stockUsd8,
+      blockNumber: raw.blockNumber,
+      blockHash: blocks.get(raw.blockNumber)!.hash,
+      txHash: raw.transactionHash,
+      logIndex: raw.logIndex,
+      launchedAt: blockTime(raw.blockNumber),
+    });
+  }
+
+  const swapRows: SwapInsert[] = [];
+  const candleBuckets: { token: string; bucket: Date }[] = [];
+  const seenBuckets = new Set<string>();
+  for (const raw of swapLogs) {
+    const swap = decodeSwap(raw);
+    if (!swap || raw.blockNumber === null || raw.transactionHash === null || raw.logIndex === null) continue;
+    const pool = pools.get(swap.poolId.toLowerCase());
+    if (!pool) continue;
+    const { side, amountTokenRaw, amountStockRaw } = classifySwap(swap, pool.tokenIsCurrency0);
+    const priceE30 = stockPerTokenE30(swap.sqrtPriceX96, pool.tokenIsCurrency0, pool.stockDecimals);
+    const time = blockTime(raw.blockNumber);
+    swapRows.push({
+      txHash: raw.transactionHash,
+      logIndex: raw.logIndex,
+      token: pool.token,
+      poolId: swap.poolId,
+      side,
+      sender: swap.sender,
+      trader: senders.get(raw.transactionHash) ?? null,
+      amountTokenRaw,
+      amountStockRaw,
+      priceTokenInStock: e30ToDecimalString(priceE30),
+      sqrtPriceX96: swap.sqrtPriceX96,
+      liquidity: swap.liquidity,
+      tick: swap.tick,
+      feeStockRaw: 0n,
+      blockNumber: raw.blockNumber,
+      blockHash: blocks.get(raw.blockNumber)!.hash,
+      blockTime: time,
+    });
+    const bucket = minuteBucket(time);
+    const key = `${pool.token.toLowerCase()}|${bucket.toISOString()}`;
+    if (!seenBuckets.has(key)) {
+      seenBuckets.add(key);
+      candleBuckets.push({ token: pool.token, bucket });
     }
   }
 
-  let launches = 0;
-  let swaps = 0;
-  let transfers = 0;
-  await db.transaction(async (tx) => {
-    for (const block of blocks.values()) {
-      await upsertBlock(tx, {
-        number: block.number,
-        hash: block.hash,
-        parentHash: block.parentHash,
-        timestamp: new Date(Number(block.timestamp) * 1000),
-      });
-    }
-
-    for (const { log: raw, event } of launchedLogs) {
-      const pool = pools.get(event.poolId.toLowerCase());
-      if (!pool || raw.blockNumber === null || raw.transactionHash === null || raw.logIndex === null) continue;
-      await insertLaunch(tx, {
-        token: event.token,
-        stock: event.stock,
-        creator: event.creator,
-        poolId: event.poolId,
-        tokenIsCurrency0: pool.tokenIsCurrency0,
-        name: event.name,
-        symbol: event.symbol,
-        contractUri: event.contractURI,
-        openingSqrtPriceX96: event.sqrtPriceX96,
-        tickLower: event.tickLower,
-        tickUpper: event.tickUpper,
-        liquidity: event.liquidity,
-        stockUsd8: event.stockUsd8,
-        blockNumber: raw.blockNumber,
-        blockHash: blocks.get(raw.blockNumber)!.hash,
-        txHash: raw.transactionHash,
-        logIndex: raw.logIndex,
-        launchedAt: blockTime(raw.blockNumber),
-      });
-      launches += 1;
-    }
-
-    const touchedCandles = new Set<string>();
-    for (const raw of swapLogs) {
-      const swap = decodeSwap(raw);
-      if (!swap || raw.blockNumber === null || raw.transactionHash === null || raw.logIndex === null) continue;
-      const pool = pools.get(swap.poolId.toLowerCase());
+  const feeRows: FeeEventInsert[] = [];
+  const claimRows: FeeClaimInsert[] = [];
+  const swapFees: { txHash: string; poolId: string; feeStockRaw: bigint }[] = [];
+  for (const raw of contractLogs) {
+    if (raw.blockNumber === null || raw.transactionHash === null || raw.logIndex === null) continue;
+    const fee = decodeFeeCharged(raw);
+    if (fee) {
+      const pool = pools.get(fee.poolId.toLowerCase());
       if (!pool) continue;
-      const { side, amountTokenRaw, amountStockRaw } = classifySwap(swap, pool.tokenIsCurrency0);
-      const priceE30 = stockPerTokenE30(swap.sqrtPriceX96, pool.tokenIsCurrency0, pool.stockDecimals);
-      const time = blockTime(raw.blockNumber);
-      await insertSwap(tx, {
+      feeRows.push({
         txHash: raw.transactionHash,
         logIndex: raw.logIndex,
+        poolId: fee.poolId,
         token: pool.token,
-        poolId: swap.poolId,
-        side,
-        sender: swap.sender,
-        trader: senders.get(raw.transactionHash) ?? null,
-        amountTokenRaw,
-        amountStockRaw,
-        priceTokenInStock: e30ToDecimalString(priceE30),
-        sqrtPriceX96: swap.sqrtPriceX96,
-        liquidity: swap.liquidity,
-        tick: swap.tick,
-        feeStockRaw: 0n,
-        blockNumber: raw.blockNumber,
-        blockHash: blocks.get(raw.blockNumber)!.hash,
-        blockTime: time,
-      });
-      touchedCandles.add(`${pool.token.toLowerCase()}|${minuteBucket(time).toISOString()}`);
-      swaps += 1;
-    }
-
-    for (const raw of contractLogs) {
-      if (raw.blockNumber === null || raw.transactionHash === null || raw.logIndex === null) continue;
-      const fee = decodeFeeCharged(raw);
-      if (fee) {
-        const pool = pools.get(fee.poolId.toLowerCase());
-        if (!pool) continue;
-        await insertFeeEvent(tx, {
-          txHash: raw.transactionHash,
-          logIndex: raw.logIndex,
-          poolId: fee.poolId,
-          token: pool.token,
-          stock: fee.stock,
-          amountRaw: fee.amount,
-          creatorRaw: fee.creatorAmount,
-          platformRaw: fee.platformAmount,
-          feeBps: Number(fee.feeBps),
-          blockNumber: raw.blockNumber,
-          blockTime: blockTime(raw.blockNumber),
-        });
-        await setSwapFee(tx, raw.transactionHash, fee.poolId, fee.amount);
-        continue;
-      }
-      const claim = decodeFeesClaimed(raw);
-      if (claim) {
-        await insertFeeClaim(tx, {
-          txHash: raw.transactionHash,
-          logIndex: raw.logIndex,
-          stock: claim.stock,
-          account: claim.account,
-          amountRaw: claim.amount,
-          blockNumber: raw.blockNumber,
-          blockTime: blockTime(raw.blockNumber),
-        });
-      }
-    }
-
-    for (const raw of transferLogs) {
-      const transfer = decodeTransfer(raw);
-      if (!transfer || raw.blockNumber === null || raw.transactionHash === null || raw.logIndex === null) continue;
-      const inserted = await insertTransfer(tx, {
-        txHash: raw.transactionHash,
-        logIndex: raw.logIndex,
-        token: raw.address,
-        from: transfer.from,
-        to: transfer.to,
-        amountRaw: transfer.value,
+        stock: fee.stock,
+        amountRaw: fee.amount,
+        creatorRaw: fee.creatorAmount,
+        platformRaw: fee.platformAmount,
+        feeBps: Number(fee.feeBps),
         blockNumber: raw.blockNumber,
         blockTime: blockTime(raw.blockNumber),
       });
-      if (!inserted || transfer.value === 0n) continue;
-      if (transfer.from.toLowerCase() !== ZERO_ADDRESS) {
-        await applyBalanceDelta(tx, raw.address, transfer.from, -transfer.value, raw.blockNumber);
+      swapFees.push({ txHash: raw.transactionHash, poolId: fee.poolId, feeStockRaw: fee.amount });
+      continue;
+    }
+    const claim = decodeFeesClaimed(raw);
+    if (claim) {
+      claimRows.push({
+        txHash: raw.transactionHash,
+        logIndex: raw.logIndex,
+        stock: claim.stock,
+        account: claim.account,
+        amountRaw: claim.amount,
+        blockNumber: raw.blockNumber,
+        blockTime: blockTime(raw.blockNumber),
+      });
+    }
+  }
+
+  const transferRows: TransferInsert[] = [];
+  for (const raw of transferLogs) {
+    const transfer = decodeTransfer(raw);
+    if (!transfer || raw.blockNumber === null || raw.transactionHash === null || raw.logIndex === null) continue;
+    transferRows.push({
+      txHash: raw.transactionHash,
+      logIndex: raw.logIndex,
+      token: raw.address,
+      from: transfer.from,
+      to: transfer.to,
+      amountRaw: transfer.value,
+      blockNumber: raw.blockNumber,
+      blockTime: blockTime(raw.blockNumber),
+    });
+  }
+
+  let transfers = 0;
+  await db.transaction(async (tx) => {
+    await upsertBlocks(tx, blockRows);
+    await insertLaunches(tx, launchRows);
+    await insertSwaps(tx, swapRows);
+    await insertFeeEvents(tx, feeRows);
+    // Fees land on swap rows, so the swaps have to exist first.
+    await addSwapFees(tx, swapFees);
+    await insertFeeClaims(tx, claimRows);
+
+    // Only transfers that were new move balances, so a re-run of the same range cannot double up.
+    const inserted = await insertTransfers(tx, transferRows);
+    const deltas: BalanceDelta[] = [];
+    for (const t of inserted) {
+      if (t.amountRaw === 0n) continue;
+      if (t.from.toLowerCase() !== ZERO_ADDRESS) {
+        deltas.push({ token: t.token, holder: t.from, delta: -t.amountRaw, blockNumber: t.blockNumber });
       }
-      if (transfer.to.toLowerCase() !== ZERO_ADDRESS) {
-        await applyBalanceDelta(tx, raw.address, transfer.to, transfer.value, raw.blockNumber);
+      if (t.to.toLowerCase() !== ZERO_ADDRESS) {
+        deltas.push({ token: t.token, holder: t.to, delta: t.amountRaw, blockNumber: t.blockNumber });
       }
       transfers += 1;
     }
+    await applyBalanceDeltas(tx, deltas);
 
-    for (const key of touchedCandles) {
-      const [token, bucket] = key.split('|') as [string, string];
-      await rebuildCandle(tx, token, new Date(bucket));
-    }
-
+    await rebuildCandles(tx, candleBuckets);
     await writeCursor(tx, to + 1n, blocks.get(to)!.hash);
   });
+  const launches = launchRows.length;
+  const swaps = swapRows.length;
 
   return { status: 'progressed', fromBlock: next, toBlock: to, launches, swaps, transfers };
 }
