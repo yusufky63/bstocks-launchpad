@@ -5,7 +5,7 @@ import type { Address } from 'viem';
 import { findStock } from '@stockpair/core';
 import { listHoldings, listMarkets, listSwaps, type Db } from '@stockpair/core/db';
 
-import { cached, TTL } from './cache.server';
+import { API_BUDGET_MS, cached, TTL, withTimeout } from './cache.server';
 import { toMarketView, type MarketView } from './market-view';
 import { readClaimable } from './onchain.server';
 import { readCreatorOverview } from './stats.server';
@@ -24,8 +24,13 @@ export type WalletSummary = {
   creator: CreatorOverview;
 };
 
-export async function readWalletSummary(db: Db, wallet: string): Promise<WalletSummary> {
-  return cached(`wallet:${wallet}`, TTL.list, async () => {
+/**
+ * Null means the read did not finish in time. Without this guard a stalled query or RPC call left
+ * the request hanging until the platform killed it, which is the one outcome worse than an error.
+ */
+export async function readWalletSummary(db: Db, wallet: string): Promise<WalletSummary | null> {
+  return withTimeout(
+    cached(`wallet:${wallet}`, TTL.list, async () => {
     const now = new Date();
     const [createdRows, holdingRows, swaps, claimableRaw, creator, stocks] = await Promise.all([
       listMarkets(db, { creator: wallet, limit: 200 }),
@@ -105,5 +110,8 @@ export async function readWalletSummary(db: Db, wallet: string): Promise<WalletS
       }),
       creator,
     };
-  });
+    }),
+    API_BUDGET_MS,
+    null,
+  );
 }

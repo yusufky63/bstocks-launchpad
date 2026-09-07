@@ -27,6 +27,24 @@ export default async function WalletPage({ params }: Props) {
   const wallet = parseAddressParam(address);
   if (!wallet) notFound();
   const summary = await readWalletSummary(await getDb(), wallet);
+  // A read that ran out of time renders the shell with the address, not a wallet full of zeros.
+  if (!summary) {
+    return (
+      <div className="flex flex-col gap-5">
+        <PageTitle
+          index="05 — Wallet"
+          title={<span className="font-mono tracking-normal text-[28px] md:text-[36px]"><Named address={wallet} chars={6} /></span>}
+          lead="Reading this wallet from confirmed Base events…"
+          action={
+            <LinkButton href={`https://basescan.org/address/${wallet}`} external>
+              BaseScan ↗
+            </LinkButton>
+          }
+        />
+        <Empty>This wallet took too long to read. Reload in a moment.</Empty>
+      </div>
+    );
+  }
   const isCreator = summary.creator.tokens > 0;
 
   return (

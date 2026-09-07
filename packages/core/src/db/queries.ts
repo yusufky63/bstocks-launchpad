@@ -793,38 +793,38 @@ export type CreatorOverviewRow = {
 /** The creator profile in numbers: their tokens, the trading they attracted, the fees they earned. */
 export async function creatorOverview(db: Db, creator: string): Promise<CreatorOverviewRow> {
   const c = creator.toLowerCase();
-  const [head] = await db.query<{ tokens: number; first_launch_at: Date | null }>(
-    `SELECT count(*)::int AS tokens, min(launched_at) AS first_launch_at FROM launches WHERE creator = $1`,
+  // Round trips to a remote database dominate here, so the scalars share one query and the two
+  // groupings are issued alongside it: five sequential trips become one wave.
+  const scalarRow = db.query<{ tokens: number; first_launch_at: Date | null; trades: number; unique_traders: number; holders: number }>(
+    `SELECT (SELECT count(*) FROM launches WHERE creator = $1)::int AS tokens,
+            (SELECT min(launched_at) FROM launches WHERE creator = $1) AS first_launch_at,
+            (SELECT count(*) FROM swaps s JOIN launches l ON l.token = s.token WHERE l.creator = $1)::int AS trades,
+            (SELECT count(DISTINCT s.trader) FROM swaps s JOIN launches l ON l.token = s.token WHERE l.creator = $1)::int AS unique_traders,
+            (SELECT count(*) FROM balances b JOIN launches l ON l.token = b.token
+              WHERE l.creator = $1 AND b.balance_raw > 0
+                AND b.holder <> '0x000000000000000000000000000000000000dead')::int AS holders`,
     [c],
   );
-  const [trading] = await db.query<{ trades: number; unique_traders: number }>(
-    `SELECT count(*)::int AS trades, count(DISTINCT s.trader)::int AS unique_traders
-     FROM swaps s JOIN launches l ON l.token = s.token WHERE l.creator = $1`,
-    [c],
-  );
-  const [holders] = await db.query<{ holders: number }>(
-    `SELECT count(*)::int AS holders FROM balances b JOIN launches l ON l.token = b.token
-     WHERE l.creator = $1 AND b.balance_raw > 0 AND b.holder <> '0x000000000000000000000000000000000000dead'`,
-    [c],
-  );
-  const volume = await db.query<StockAmountRow>(
+  const volumeRows = db.query<StockAmountRow>(
     `SELECT l.stock, st.symbol, st.decimals, coalesce(sum(s.amount_stock_raw), 0)::numeric(40,0)::text AS amount_raw
      FROM launches l JOIN stocks st ON st.address = l.stock LEFT JOIN swaps s ON s.token = l.token
      WHERE l.creator = $1 GROUP BY l.stock, st.symbol, st.decimals`,
     [c],
   );
-  const fees = await db.query<StockAmountRow>(
+  const feeRows = db.query<StockAmountRow>(
     `SELECT f.stock, st.symbol, st.decimals, sum(f.creator_raw)::numeric(40,0)::text AS amount_raw
      FROM fee_events f JOIN launches l ON l.token = f.token JOIN stocks st ON st.address = f.stock
      WHERE l.creator = $1 GROUP BY f.stock, st.symbol, st.decimals`,
     [c],
   );
+  const [scalars, volume, fees] = await Promise.all([scalarRow, volumeRows, feeRows]);
+  const head = scalars[0];
   return {
     tokens: head?.tokens ?? 0,
     first_launch_at: head?.first_launch_at ?? null,
-    trades: trading?.trades ?? 0,
-    unique_traders: trading?.unique_traders ?? 0,
-    holders: holders?.holders ?? 0,
+    trades: head?.trades ?? 0,
+    unique_traders: head?.unique_traders ?? 0,
+    holders: head?.holders ?? 0,
     volume_by_stock: volume,
     fees_by_stock: fees,
   };
