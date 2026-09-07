@@ -372,6 +372,17 @@ input[type="range"].slider:disabled {
     transform: translateX(-50%);
   }
 }
+/* A row lights up for a moment when a trade lands on it, so a board that is refreshing in the
+   background reads as live rather than static. Buys and sells keep their own colour. */
+@keyframes trade-flash {
+  from {
+    background-color: var(--flash-tint);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+
 @keyframes blink {
   50% {
     opacity: 0;
@@ -424,6 +435,18 @@ input[type="range"].slider:disabled {
   animation: blink 1.6s ease-in-out infinite;
 }
 
+.trade-flash {
+  animation: trade-flash 1.4s var(--ease) both;
+}
+
+.trade-flash-buy {
+  --flash-tint: var(--positive-soft);
+}
+
+.trade-flash-sell {
+  --flash-tint: var(--danger-soft);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -434,7 +457,8 @@ input[type="range"].slider:disabled {
   }
   .tape-track,
   .coin-float,
-  .coin-float .coin-shadow {
+  .coin-float .coin-shadow,
+  .trade-flash {
     animation: none;
   }
   /* A tape that no longer moves has to be draggable, or every token past the first screenful is

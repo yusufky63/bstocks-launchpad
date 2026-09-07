@@ -2,29 +2,22 @@
 
 import { ArrowUpRight, ChevronDown, ChevronsUpDown, ChevronUp, Search } from 'lucide-react';
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { StockTile, TokenLogo } from '@/components/stock/stock-coin';
 import { Tabs } from '@/components/ui/controls';
 import { AnimatedNumber, PriceChange, TimeAgo } from '@/components/ui/display';
 import { Badge, Chip, Empty, PageTitle, Skeleton, StatStrip, cx } from '@/components/ui/primitives';
 import { formatCompact, formatNumber, formatRatio, formatUsd } from '@/lib/format';
+import { motionEnabled } from '@/lib/motion';
 import { apiGet, useMarkets, useStocks } from '@/lib/queries';
 import type { MarketView, MarketsResponse, StocksResponse } from '@/lib/types';
+
+import { SCREENS, applyScreen, type Screen } from '@/lib/screens';
 
 import { PairBadge } from './market-rows';
 
 type SortKey = 'default' | 'price' | 'change24h' | 'volume' | 'fdv' | 'holders';
-type Screen = 'all' | 'new' | 'trending' | 'gainers' | 'losers' | 'active';
-const SCREENS: Array<{ value: Screen; label: string; hint: string }> = [
-  { value: 'all', label: 'All', hint: 'Newest first' },
-  { value: 'new', label: 'New', hint: 'Launched in the last 24 hours' },
-  { value: 'trending', label: 'Trending', hint: 'Highest 24h volume' },
-  { value: 'gainers', label: 'Gainers', hint: 'Best 24h change, traded in the last day' },
-  { value: 'losers', label: 'Losers', hint: 'Worst 24h change, traded in the last day' },
-  { value: 'active', label: 'Traded 24h', hint: 'At least one swap in the last day' },
-];
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 function SortHeader({ label, col, sort, onSort }: { label: string; col: SortKey; sort: { key: SortKey; dir: 'asc' | 'desc' }; onSort: (k: SortKey) => void }) {
   const active = sort.key === col;
@@ -34,24 +27,6 @@ function SortHeader({ label, col, sort, onSort }: { label: string; col: SortKey;
       {active ? sort.dir === 'asc' ? <ChevronUp size={11} strokeWidth={2} /> : <ChevronDown size={11} strokeWidth={2} /> : <ChevronsUpDown size={11} strokeWidth={2} className="opacity-30" />}
     </button>
   );
-}
-
-/** The screener rule, shared by the list and the counts so they never disagree. */
-export function applyScreen(rows: MarketView[], screen: Screen, now = Date.now()): MarketView[] {
-  switch (screen) {
-    case 'new':
-      return rows.filter((m) => now - new Date(m.launchedAt).getTime() < DAY_MS);
-    case 'trending':
-      return [...rows].filter((m) => m.trades24h > 0).sort((a, b) => (b.volume24hUsd ?? 0) - (a.volume24hUsd ?? 0));
-    case 'gainers':
-      return [...rows].filter((m) => m.trades24h > 0 && (m.change24hPercent ?? 0) > 0).sort((a, b) => (b.change24hPercent ?? 0) - (a.change24hPercent ?? 0));
-    case 'losers':
-      return [...rows].filter((m) => m.trades24h > 0 && (m.change24hPercent ?? 0) < 0).sort((a, b) => (a.change24hPercent ?? 0) - (b.change24hPercent ?? 0));
-    case 'active':
-      return rows.filter((m) => m.trades24h > 0);
-    default:
-      return rows;
-  }
 }
 
 const COLUMNS = 'md:grid-cols-[minmax(0,1fr)_110px_130px_90px_120px_110px_80px_150px]';
@@ -218,10 +193,36 @@ export function MarketsView({ initialMarkets, initialStocks, initialStock }: { i
   );
 }
 
+/**
+ * Briefly marks a row when a trade lands on it, so a board that refreshes in the background reads as
+ * live. The direction comes from the price move, so a sell is not dressed up in green. Nothing
+ * flashes on the first render, or when the visitor has asked for reduced motion.
+ */
+function useTradeFlash(lastTradeAt: string | null, priceUsd: number | null): 'buy' | 'sell' | null {
+  const seen = useRef<{ at: string | null; price: number | null } | null>(null);
+  const [flash, setFlash] = useState<'buy' | 'sell' | null>(null);
+  useEffect(() => {
+    const before = seen.current;
+    seen.current = { at: lastTradeAt, price: priceUsd };
+    if (!before || !lastTradeAt || before.at === lastTradeAt || !motionEnabled()) return;
+    setFlash(before.price !== null && priceUsd !== null && priceUsd < before.price ? 'sell' : 'buy');
+    const clear = setTimeout(() => setFlash(null), 1_400);
+    return () => clearTimeout(clear);
+  }, [lastTradeAt, priceUsd]);
+  return flash;
+}
+
 function MarketRow({ market, isNew }: { market: MarketView; isNew: boolean }) {
   const stale = market.stockFeedStatus !== 'live';
+  const flash = useTradeFlash(market.lastTradeAt, market.priceUsd);
   return (
-    <div className={cx('rail grid grid-cols-[1fr_auto] items-center px-4 py-3 border-b border-line last:border-b-0 gap-3 hover:bg-surface transition-fast', COLUMNS)}>
+    <div
+      className={cx(
+        'rail grid grid-cols-[1fr_auto] items-center px-4 py-3 border-b border-line last:border-b-0 gap-3 hover:bg-surface transition-fast',
+        COLUMNS,
+        flash && `trade-flash trade-flash-${flash}`,
+      )}
+    >
       <Link href={`/token/${market.token}`} className="flex items-center gap-3 min-w-0">
         <TokenLogo src={market.imageUrl} symbol={market.symbol} size={36} />
         <span className="min-w-0">

@@ -6,6 +6,8 @@ import { deadlineIn, describeTradeError, minOutFor, shareOf } from '@/lib/trade'
 import { poolReserves, positionAmounts, sqrtRatioAtTick } from '@/lib/liquidity';
 import { normalizeTwitter, twitterHandle } from '@/lib/twitter';
 import { normalizeTelegram } from '@/lib/profile';
+import { applyScreen } from '@/lib/screens';
+import type { MarketView } from '@/lib/types';
 
 describe('trade helpers', () => {
   it('applies slippage to the quoted output and never exceeds it', () => {
@@ -121,5 +123,40 @@ describe('X handles', () => {
     expect(normalizeTwitter('javascript:alert(1)')).toBeNull();
     expect(normalizeTwitter('')).toBeNull();
     expect(twitterHandle('https://x.com/stockpair')).toBe('@stockpair');
+  });
+});
+
+describe('markets board ordering', () => {
+  // Only the fields the screener reads matter here; the rest of a MarketView is irrelevant to it.
+  const row = (over: Partial<MarketView>): MarketView =>
+    ({
+      symbol: 'S',
+      launchedAt: '2026-09-01T00:00:00.000Z',
+      volume24hUsd: null,
+      trades24h: 0,
+      holders: 0,
+      change24hPercent: 0,
+      ...over,
+    }) as unknown as MarketView;
+
+  it('leads the default board with what is being traded, not what launched last', () => {
+    const quiet = row({ token: '0xquiet', symbol: 'QUIET', launchedAt: '2026-09-09T00:00:00.000Z', volume24hUsd: 0, holders: 1 });
+    const busy = row({ token: '0xbusy', symbol: 'BUSY', launchedAt: '2026-09-02T00:00:00.000Z', volume24hUsd: 340_000, trades24h: 2_000, holders: 160 });
+    const small = row({ token: '0xsmall', symbol: 'SMALL', launchedAt: '2026-09-03T00:00:00.000Z', volume24hUsd: 25_000, trades24h: 40, holders: 14 });
+
+    expect(applyScreen([quiet, busy, small], 'all').map((m) => m.symbol)).toEqual(['BUSY', 'SMALL', 'QUIET']);
+  });
+
+  it('breaks ties on trades, then holders, so an untraded launch never outranks a used one', () => {
+    const a = row({ token: '0xa', symbol: 'A', volume24hUsd: 0, trades24h: 0, holders: 1 });
+    const b = row({ token: '0xb', symbol: 'B', volume24hUsd: 0, trades24h: 0, holders: 40 });
+    expect(applyScreen([a, b], 'all').map((m) => m.symbol)).toEqual(['B', 'A']);
+  });
+
+  it('leaves the New screen ordered by recency', () => {
+    const older = row({ token: '0x1', symbol: 'OLDER', launchedAt: new Date(Date.now() - 3_600_000).toISOString(), volume24hUsd: 900_000 });
+    const newer = row({ token: '0x2', symbol: 'NEWER', launchedAt: new Date(Date.now() - 60_000).toISOString(), volume24hUsd: 0 });
+    // 'new' filters rather than sorts, so the caller's order (newest first from the API) survives.
+    expect(applyScreen([newer, older], 'new').map((m) => m.symbol)).toEqual(['NEWER', 'OLDER']);
   });
 });
