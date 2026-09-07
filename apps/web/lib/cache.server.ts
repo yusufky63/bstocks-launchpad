@@ -23,8 +23,19 @@ export async function cached<T>(key: string, ttlMs: number, load: () => Promise<
       if (store.size > 5_000) sweep();
       return value;
     })
-    .finally(() => inFlight.delete(key));
+    .finally(() => {
+      // Only retract this task; a newer one may already have taken the key.
+      if (inFlight.get(key) === task) inFlight.delete(key);
+    });
   inFlight.set(key, task);
+  // A load that never settles would otherwise be handed to every later caller for the life of the
+  // process, so one stalled query poisons its key permanently and every request on it times out.
+  // Stop sharing it after the deadline; the next caller starts a fresh attempt, and if this one
+  // does finish it still fills the cache.
+  const retract = setTimeout(() => {
+    if (inFlight.get(key) === task) inFlight.delete(key);
+  }, STALE_LOAD_MS);
+  retract.unref?.();
   return task;
 }
 
@@ -72,6 +83,9 @@ export const RENDER_BUDGET_MS = 7_000;
  * budget turns a slow answer into no answer.
  */
 export const API_BUDGET_MS = 9_000;
+
+/** After this, an unfinished load stops being shared with new callers. */
+const STALE_LOAD_MS = 12_000;
 
 export const TTL = {
   /** Lists that refresh with every indexer tick. */
