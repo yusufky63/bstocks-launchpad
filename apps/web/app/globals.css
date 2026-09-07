@@ -410,6 +410,10 @@ input[type="range"].slider:disabled {
 .tape:hover .tape-track {
   animation-play-state: paused;
 }
+/* The second copy of the cells exists only so the loop can wrap without a seam. */
+.tape-dup {
+  display: contents;
+}
 
 .live-dot {
   display: inline-block;
@@ -432,6 +436,24 @@ input[type="range"].slider:disabled {
   .coin-float,
   .coin-float .coin-shadow {
     animation: none;
+  }
+  /* A tape that no longer moves has to be draggable, or every token past the first screenful is
+     unreachable. The seam copy is dead weight once there is no loop to hide, and the edge mask
+     only made sense while cells were sliding out of view. */
+  .tape {
+    overflow-x: auto;
+    scrollbar-width: none;
+    mask-image: none;
+    scroll-snap-type: x proximity;
+  }
+  .tape::-webkit-scrollbar {
+    display: none;
+  }
+  .tape-track > a {
+    scroll-snap-align: start;
+  }
+  .tape-dup {
+    display: none;
   }
 }
 

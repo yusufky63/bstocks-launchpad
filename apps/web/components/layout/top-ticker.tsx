@@ -43,13 +43,18 @@ export function TopTicker({ initialMarkets }: { initialMarkets?: MarketsResponse
   );
 }
 
+/**
+ * The cells appear twice so the loop wraps without a seam. When the visitor asks for reduced
+ * motion the CSS drops the copy and makes the tape scroll by hand instead, so the tokens past the
+ * first screenful stay reachable rather than sitting behind a frozen overflow.
+ */
 function Track({ cells, seconds }: { cells: ReactNode[]; seconds: number }) {
   return (
     <div className="tape flex-1">
       <div className="tape-track" style={{ animationDuration: `${seconds}s` }}>
         {cells}
         {cells.map((c, i) => (
-          <span key={`dup-${i}`} aria-hidden className="contents">
+          <span key={`dup-${i}`} aria-hidden className="tape-dup">
             {c}
           </span>
         ))}
