@@ -3,8 +3,6 @@
 import { useEffect, useState } from 'react'
 import { Sheet } from '@/components/ui/sheet'
 
-const DISMISSED = 'launchpad:eligibility-dismissed'
-
 /**
  * The eligibility question, asked on arrival.
  *
@@ -18,14 +16,10 @@ const DISMISSED = 'launchpad:eligibility-dismissed'
 export function EligibilityGate() {
   const [restricted, setRestricted] = useState(false)
   const [country, setCountry] = useState<string | null>(null)
-  const [dismissed, setDismissed] = useState(() => {
-    if (typeof window === 'undefined') return true
-    try {
-      return sessionStorage.getItem(DISMISSED) === '1'
-    } catch {
-      return false
-    }
-  })
+  // Not remembered across pages. The shell keys this component by pathname, so closing it clears
+  // the current page and the next one asks again: somebody being refused should be told on every
+  // page they land on, not once and then silently.
+  const [dismissed, setDismissed] = useState(false)
 
   useEffect(() => {
     let live = true
@@ -42,14 +36,7 @@ export function EligibilityGate() {
     }
   }, [])
 
-  const close = () => {
-    try {
-      sessionStorage.setItem(DISMISSED, '1')
-    } catch {
-      /* private mode: it asks again on the next page load */
-    }
-    setDismissed(true)
-  }
+  const close = () => setDismissed(true)
 
   return (
     <Sheet open={restricted && !dismissed} onClose={close} title="Not available in your region">

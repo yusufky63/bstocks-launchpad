@@ -152,7 +152,8 @@ export function AppShell({ children, initialMarkets }: { children: ReactNode; in
         </div>
       </nav>
 
-      <EligibilityGate />
+      {/* Keyed by path: every page a refused visitor lands on says so again. */}
+      <EligibilityGate key={path} />
     </div>
   );
 }
