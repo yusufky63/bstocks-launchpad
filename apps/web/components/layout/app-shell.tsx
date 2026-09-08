@@ -12,6 +12,7 @@ import type { MarketsResponse } from '@/lib/types';
 
 import { ConnectButton } from './connect-button';
 import { useTheme } from './theme-provider';
+import { EligibilityGate } from '@/components/common/eligibility-gate';
 import { TopTicker } from './top-ticker';
 
 /** Mobile bar. Stocks and Stats live in the footer; Create is the one accent action. */
@@ -150,6 +151,8 @@ export function AppShell({ children, initialMarkets }: { children: ReactNode; in
           })}
         </div>
       </nav>
+
+      <EligibilityGate />
     </div>
   );
 }
