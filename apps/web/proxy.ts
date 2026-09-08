@@ -3,6 +3,9 @@ import { NextResponse, type NextRequest } from 'next/server'
 /**
  * Compliance geoblock at the edge.
  *
+ * Named `proxy`, not `middleware`: Next.js 16 renamed the convention, and a file called
+ * middleware.ts is simply never loaded.
+ *
  * Every pool on this launchpad is quoted in a Coinbase tokenized stock, so trading here means
  * holding one, and the issuer offers them only to eligible persons outside the United States. The
  * routes that exist to build a trade or open a market answer 451 for a blocked country.
@@ -26,7 +29,7 @@ function requestCountry(req: NextRequest): string {
   return (req.headers.get('x-vercel-ip-country') ?? req.headers.get('cf-ipcountry') ?? req.headers.get('x-country-code') ?? '').toUpperCase()
 }
 
-export function middleware(req: NextRequest) {
+export function proxy(req: NextRequest) {
   const path = req.nextUrl.pathname
   const write = req.method !== 'GET' && req.method !== 'HEAD' && req.method !== 'OPTIONS'
   if (!write || !RESTRICTED_WRITES.some((r) => r.test(path))) return NextResponse.next()
