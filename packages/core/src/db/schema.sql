@@ -182,6 +182,24 @@ ALTER TABLE stocks ADD COLUMN IF NOT EXISTS image_uri text;
 
 -- Version 3: creator-signed profile overrides. Name and symbol stay onchain and immutable; these
 -- fields are presentation only and always shown as "updated by the creator".
+-- A reorg deletes the launch a profile hangs off, and the FK below would block that. These rows are
+-- the only thing in the database that is not derivable from the chain: the creator signed them, the
+-- signature cannot be replayed past its max age, and no re-index brings them back. So a rollback
+-- parks them here instead of destroying them, and re-indexing the same launch restores them.
+CREATE TABLE IF NOT EXISTS token_profiles_archive (
+  token        text PRIMARY KEY,
+  description  text,
+  image_uri    text,
+  website      text,
+  twitter      text,
+  telegram     text,
+  signer       text NOT NULL,
+  signature    text NOT NULL,
+  issued_at    timestamptz NOT NULL,
+  updated_at   timestamptz NOT NULL,
+  archived_at  timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS token_profiles (
   token        text PRIMARY KEY REFERENCES launches(token),
   description  text,

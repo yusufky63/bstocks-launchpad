@@ -2,7 +2,7 @@
 
 import { useQueryClient } from '@tanstack/react-query';
 import { ArrowUpRight } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { erc20Abi, type Address, type Hash } from 'viem';
 import { useAccount, useReadContracts } from 'wagmi';
 import { base } from 'wagmi/chains';
@@ -41,6 +41,11 @@ export function TradePanel({ market, initialSide = 'buy', onTraded, className }:
   if (initialSide !== seenSide) {
     setSeenSide(initialSide);
     setSide(initialSide);
+    // Clear the amount the way the in-panel toggle does. Buy and sell are denominated in different
+    // tokens with different decimals, so carrying the number across means the next quote is for a
+    // different trade than the one the field is showing.
+    setAmountText('');
+    setPct(null);
   }
 
   const stockAddress = market.stock.address as Address;
@@ -70,7 +75,14 @@ export function TradePanel({ market, initialSide = 'buy', onTraded, className }:
   const insufficient = amountIn !== null && balance !== null && amountIn > balance;
   const stockUsd = market.stockUsd;
 
+  // Clear the last hash when the user starts a new trade, but not when our own success handler
+  // resets the amount — that would erase the confirmation the moment it appeared.
+  const justTraded = useRef(false);
   useEffect(() => {
+    if (justTraded.current) {
+      justTraded.current = false;
+      return;
+    }
     setLastTx(null);
   }, [side, amountText]);
 
@@ -87,11 +99,22 @@ export function TradePanel({ market, initialSide = 'buy', onTraded, className }:
   const tokenAmountUsd = (raw: bigint) => (market.priceUsd === null ? null : (Number(raw) / 1e18) * market.priceUsd);
   const inputUsd = amountIn === null || amountIn === 0n ? null : buy ? stockAmountUsd(amountIn) : tokenAmountUsd(amountIn);
   const outputUsd = q ? (buy ? tokenAmountUsd(BigInt(q.amountOut)) : stockAmountUsd(BigInt(q.amountOut))) : null;
-  const canReview = Boolean(onBase && deployment && amountIn && amountIn > 0n && q && !insufficient && quote.status === 'success');
+  // The quote query keeps serving the previous result while a new one is in flight, and reports it
+  // as a success. Without this equality check the CTA stays live after the amount changes, so a
+  // confirmation can carry the old quote's minAmountOut against the new, larger input — a swap with
+  // effectively no slippage floor. Match the quote to what is on screen before allowing review.
+  const quoteMatches = Boolean(q && amountIn !== null && q.amountIn === amountIn.toString() && q.side === side);
+  const canReview = Boolean(
+    onBase && deployment && amountIn && amountIn > 0n && q && !insufficient && quote.status === 'success' && quoteMatches && !quote.isPlaceholderData,
+  );
   const ctaLabel = buy ? `Buy ${market.symbol}${inputUsd !== null ? ` · ${formatUsd(inputUsd)}` : ''}` : `Sell ${market.symbol}${inputUsd !== null ? ` · ≈ ${formatUsd(inputUsd)}` : ''}`;
 
   const onDone = (hash: Hash) => {
     setLastTx(hash);
+    // Close the sheet explicitly. It used to unmount because clearing the amount removed the quote
+    // that kept it mounted, which took the success screen and the transaction hash with it.
+    setReview(false);
+    justTraded.current = true;
     setAmountText('');
     setPct(null);
     void balances.refetch();
@@ -225,7 +248,7 @@ export function TradePanel({ market, initialSide = 'buy', onTraded, className }:
         </p>
       </div>
 
-      {q && amountIn !== null && deployment && (
+      {q && amountIn !== null && deployment && quoteMatches && (
         <TradeReviewSheet open={review} onClose={() => setReview(false)} onDone={onDone} market={market} quote={q} amountIn={amountIn} slippageBps={slippageBps} router={deployment.router} />
       )}
     </div>

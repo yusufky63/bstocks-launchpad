@@ -36,6 +36,7 @@ import {
   type LaunchInsert,
   type SwapInsert,
   type TransferInsert,
+  restoreArchivedProfiles,
 } from '@stockpair/core/db';
 
 import type { ChainReader } from './chain-reader';
@@ -109,11 +110,22 @@ export async function syncOnce(options: SyncOptions): Promise<SyncResult> {
     const onchain = await chain.getBlock(lastNumber);
     if (onchain.hash.toLowerCase() !== cursor.last_block_hash.toLowerCase()) {
       const ancestor = await findCommonAncestor(db, chain, lastNumber, options.maxReorgDepth ?? 200, deployment.deployBlock);
+      if (ancestor === null) {
+        // We could not find where the chains diverge within the search depth. Rolling back on a
+        // guess would delete far more than the reorg touched, so stop instead and let a human look.
+        log('reorg depth exhausted', { lastNumber: lastNumber.toString(), maxDepth: options.maxReorgDepth ?? 200 });
+        return { status: 'idle', nextBlock: next, safeBlock: safe };
+      }
       const rollbackTo = ancestor + 1n;
       log('reorg detected', { lastNumber: lastNumber.toString(), rollbackTo: rollbackTo.toString() });
-      await rollbackFrom(db, rollbackTo);
+      // Read the hash before touching anything, then undo and re-point the cursor together. Doing
+      // the rollback, an RPC call and the cursor write as three steps leaves the cursor past rows
+      // that no longer exist if the middle one fails, and a hole that is never re-read.
       const ancestorHash = ancestor >= deployment.deployBlock ? (await chain.getBlock(ancestor)).hash : null;
-      await writeCursor(db, rollbackTo, ancestorHash);
+      await db.transaction(async (tx) => {
+        await rollbackFrom(tx, rollbackTo);
+        await writeCursor(tx, rollbackTo, ancestorHash);
+      });
       return { status: 'reorg', rolledBackTo: rollbackTo };
     }
   }
@@ -312,6 +324,9 @@ export async function syncOnce(options: SyncOptions): Promise<SyncResult> {
   await db.transaction(async (tx) => {
     await upsertBlocks(tx, blockRows);
     await insertLaunches(tx, launchRows);
+    // A rollback parks creator-signed profiles rather than destroying them; if this range replays a
+    // launch that was rolled back, its profile becomes valid again and comes back with it.
+    if (launchRows.length > 0) await restoreArchivedProfiles(tx, launchRows.map((l) => l.token));
     await insertSwaps(tx, swapRows);
     await insertFeeEvents(tx, feeRows);
     // Fees land on swap rows, so the swaps have to exist first.
@@ -355,14 +370,19 @@ async function findCommonAncestor(
   from: bigint,
   maxDepth: number,
   floor: bigint,
-): Promise<bigint> {
-  for (let number = from; number >= floor && from - number <= BigInt(maxDepth); number -= 1n) {
+): Promise<bigint | null> {
+  let number = from;
+  for (; number >= floor && from - number <= BigInt(maxDepth); number -= 1n) {
     const stored = await readBlockHash(db, number);
     if (stored === null) continue;
     const onchain = await chain.getBlock(number);
     if (onchain.hash.toLowerCase() === stored.toLowerCase()) return number;
   }
-  return floor - 1n;
+  // Walking all the way down to the deploy block without a match means everything we hold really is
+  // orphaned. Running out of depth first means we simply do not know, and the two must not look the
+  // same: `blocks` is stored sparsely, so a quiet stretch plus a long catch-up can exhaust the
+  // depth, and treating that as "no ancestor" would wipe the database back to the deploy block.
+  return number < floor ? floor - 1n : null;
 }
 
 export function minuteBucket(date: Date): Date {

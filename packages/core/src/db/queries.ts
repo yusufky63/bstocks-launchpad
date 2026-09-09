@@ -603,35 +603,81 @@ export async function upsertStockQuote(
 }
 
 /** Removes everything at or after `fromBlock` (reorg recovery) and rebuilds derived tables. */
+/**
+ * Puts back any profile that a rollback parked, for launches that have just been re-indexed. The
+ * token address is deterministic for a given creator and salt, so a re-org that replays the same
+ * launch produces the same token and the creator's signed profile becomes valid again.
+ */
+export async function restoreArchivedProfiles(db: Db, tokens: readonly string[]): Promise<number> {
+  if (tokens.length === 0) return 0;
+  const lower = tokens.map((t) => t.toLowerCase());
+  const restored = await db.query<{ token: string }>(
+    `INSERT INTO token_profiles
+       (token, description, image_uri, website, twitter, telegram, signer, signature, issued_at, updated_at)
+     SELECT a.token, a.description, a.image_uri, a.website, a.twitter, a.telegram,
+            a.signer, a.signature, a.issued_at, a.updated_at
+     FROM token_profiles_archive a
+     WHERE a.token = ANY($1::text[])
+       AND EXISTS (SELECT 1 FROM launches l WHERE l.token = a.token)
+     ON CONFLICT (token) DO NOTHING
+     RETURNING token`,
+    [lower],
+  );
+  if (restored.length > 0) {
+    await db.query('DELETE FROM token_profiles_archive WHERE token = ANY($1::text[])', [restored.map((r) => r.token)]);
+  }
+  return restored.length;
+}
+
+/**
+ * Undoes everything at or above `fromBlock`.
+ *
+ * Runs directly on the handle it is given and opens no transaction of its own, because the caller
+ * needs the undo and its own cursor write to land together -- a cursor left pointing past rows that
+ * no longer exist leaves a hole nothing re-reads. Pass a transaction.
+ */
 export async function rollbackFrom(db: Db, fromBlock: bigint) {
   const from = fromBlock.toString();
-  await db.transaction(async (tx) => {
-    const affected = await tx.query<{ token: string; bucket: Date }>(
-      `SELECT DISTINCT token, date_trunc('minute', block_time) AS bucket FROM swaps WHERE block_number >= $1`,
-      [from],
-    );
-    const undone = await tx.query<{ token: string; from_address: string; to_address: string; amount_raw: string }>(
-      `DELETE FROM transfers WHERE block_number >= $1 RETURNING token, from_address, to_address, amount_raw`,
-      [from],
-    );
-    for (const t of undone) {
-      await applyBalanceDelta(tx, t.token, t.from_address, BigInt(t.amount_raw), fromBlock);
-      await applyBalanceDelta(tx, t.token, t.to_address, -BigInt(t.amount_raw), fromBlock);
-    }
-    await tx.query('DELETE FROM swaps WHERE block_number >= $1', [from]);
-    await tx.query('DELETE FROM fee_events WHERE block_number >= $1', [from]);
-    await tx.query('DELETE FROM fee_claims WHERE block_number >= $1', [from]);
-    // Launches in the reorged range take their derived rows with them.
-    await tx.query('DELETE FROM token_profiles WHERE token IN (SELECT token FROM launches WHERE block_number >= $1)', [from]);
-    await tx.query('DELETE FROM balances WHERE token IN (SELECT token FROM launches WHERE block_number >= $1)', [from]);
-    await tx.query('DELETE FROM candles WHERE token IN (SELECT token FROM launches WHERE block_number >= $1)', [from]);
-    await tx.query('DELETE FROM launches WHERE block_number >= $1', [from]);
-    await tx.query('DELETE FROM blocks WHERE number >= $1', [from]);
-    for (const c of affected) {
-      await tx.query('DELETE FROM candles WHERE token = $1 AND bucket = $2', [c.token, c.bucket]);
-      await rebuildCandle(tx, c.token, c.bucket);
-    }
-  });
+
+  const affected = await db.query<{ token: string; bucket: Date }>(
+    `SELECT DISTINCT token, date_trunc('minute', block_time) AS bucket FROM swaps WHERE block_number >= $1`,
+    [from],
+  );
+  const undone = await db.query<{ token: string; from_address: string; to_address: string; amount_raw: string }>(
+    `DELETE FROM transfers WHERE block_number >= $1 RETURNING token, from_address, to_address, amount_raw`,
+    [from],
+  );
+  for (const t of undone) {
+    await applyBalanceDelta(db, t.token, t.from_address, BigInt(t.amount_raw), fromBlock);
+    await applyBalanceDelta(db, t.token, t.to_address, -BigInt(t.amount_raw), fromBlock);
+  }
+  await db.query('DELETE FROM swaps WHERE block_number >= $1', [from]);
+  await db.query('DELETE FROM fee_events WHERE block_number >= $1', [from]);
+  await db.query('DELETE FROM fee_claims WHERE block_number >= $1', [from]);
+  // Launches in the reorged range take their derived rows with them -- except the creator's signed
+  // profile, which is not derived from anything and cannot be signed again. Park it first.
+  await db.query(
+    `INSERT INTO token_profiles_archive
+       (token, description, image_uri, website, twitter, telegram, signer, signature, issued_at, updated_at)
+     SELECT p.token, p.description, p.image_uri, p.website, p.twitter, p.telegram,
+            p.signer, p.signature, p.issued_at, p.updated_at
+     FROM token_profiles p
+     WHERE p.token IN (SELECT token FROM launches WHERE block_number >= $1)
+     ON CONFLICT (token) DO UPDATE SET
+       description = EXCLUDED.description, image_uri = EXCLUDED.image_uri, website = EXCLUDED.website,
+       twitter = EXCLUDED.twitter, telegram = EXCLUDED.telegram, signer = EXCLUDED.signer,
+       signature = EXCLUDED.signature, issued_at = EXCLUDED.issued_at, updated_at = EXCLUDED.updated_at`,
+    [from],
+  );
+  await db.query('DELETE FROM token_profiles WHERE token IN (SELECT token FROM launches WHERE block_number >= $1)', [from]);
+  await db.query('DELETE FROM balances WHERE token IN (SELECT token FROM launches WHERE block_number >= $1)', [from]);
+  await db.query('DELETE FROM candles WHERE token IN (SELECT token FROM launches WHERE block_number >= $1)', [from]);
+  await db.query('DELETE FROM launches WHERE block_number >= $1', [from]);
+  await db.query('DELETE FROM blocks WHERE number >= $1', [from]);
+  for (const c of affected) {
+    await db.query('DELETE FROM candles WHERE token = $1 AND bucket = $2', [c.token, c.bucket]);
+    await rebuildCandle(db, c.token, c.bucket);
+  }
 }
 
 // ---------------------------------------------------------------------------------------------
