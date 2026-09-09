@@ -120,7 +120,7 @@ export function AppShell({ children, initialMarkets }: { children: ReactNode; in
             </nav>
           </div>
           <p className="text-[12px] text-ink-muted leading-relaxed max-w-[110ch]">
-            Every token launched here has a fixed 1,000,000,000 supply, no admin, and a Uniswap v4 pool against a Coinbase tokenized stock whose liquidity can never be removed. Swap fees are 1%, paid in the stock: 70% to the creator, 30% to the platform. The launchpad is part of{' '}
+            Every token launched here has a fixed 1,000,000,000 supply, no admin, and its whole supply placed in a Uniswap v4 position against a Coinbase tokenized stock — a position no function can withdraw. Swap fees are 1%, paid in the stock: 70% to the creator, 30% to the platform. The launchpad is part of{' '}
             <a href="https://basestocks.finance" target="_blank" rel="noreferrer noopener" className="text-ink-secondary hover:text-primary transition-fast underline underline-offset-2">
               BaseStocks
             </a>

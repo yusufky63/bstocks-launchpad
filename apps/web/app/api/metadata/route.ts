@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { error, json } from '@/lib/api.server';
+import { callerKey, rateLimit } from '@/lib/rate-limit.server';
 import { PinError, pinMetadata } from '@/lib/pinata.server';
 import { normalizeTwitter } from '@/lib/twitter';
 
@@ -16,7 +17,22 @@ const fieldsSchema = z.object({
 
 
 /** Pins the token's image and ERC-7572 metadata; returns the contractURI for the launch. */
+/** Pins are expensive and this endpoint is unauthenticated, so cap what one caller can spend. */
+const PINS_PER_HOUR = 10;
+
 export async function POST(request: Request): Promise<Response> {
+  // Nothing here requires a wallet or a signature, and every call writes up to 2 MB to the one
+  // Pinata account that serves every token's image. A single loop would burn the quota and take
+  // every logo down with it, so the caller is capped before any body is read.
+  const limited = rateLimit(callerKey(request, 'metadata'), PINS_PER_HOUR, 60 * 60_000);
+  if (!limited.ok) {
+    return json(
+      { error: { code: 'RATE_LIMITED', message: 'Too many uploads from this address. Try again shortly.' } },
+      429,
+      { 'retry-after': String(limited.retryAfterSeconds) },
+    );
+  }
+
   let form: FormData;
   try {
     form = await request.formData();

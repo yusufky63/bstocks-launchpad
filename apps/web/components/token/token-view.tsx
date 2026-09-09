@@ -257,7 +257,12 @@ function FeesPanel({ details, market }: { details: NonNullable<Extract<TokenResp
           <div className="font-mono text-[11px] text-ink-secondary">{formatNumber(fees.platformStock, 6)} {market.stock.symbol}</div>
         </div>
         <div className="p-3">
-          <div className="font-mono text-[10px] uppercase tracking-[0.12em] text-ink-muted">Creator claimable now</div>
+          {/* The hook books claims per (stock, creator), not per token, so this figure covers every
+              token this creator has paired to this stock — and claim() withdraws them together.
+              Labelled for what it is rather than presented as this token's earnings. */}
+          <div className="font-mono text-[10px] uppercase tracking-[0.12em] text-ink-muted" title={`Fees the creator can withdraw in ${market.stock.symbol}, across every token they have paired to it`}>
+            Creator claimable · all {market.stock.symbol}
+          </div>
           <div className="display num text-[20px] leading-tight">{fees.claimableUsd === null ? '—' : formatUsd(fees.claimableUsd)}</div>
           <div className="font-mono text-[11px] text-ink-secondary">{fees.claimableStock === null ? '—' : `${formatNumber(fees.claimableStock, 6)} ${market.stock.symbol}`}</div>
         </div>
