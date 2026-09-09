@@ -200,6 +200,28 @@ export async function readBlockHash(db: Db, number: bigint): Promise<string | nu
   return rows[0]?.hash ?? null;
 }
 
+/**
+ * Strips characters Postgres will not store in a `text` column, and the control characters that
+ * have no business in a name.
+ *
+ * Token names, symbols and URIs come from whatever the launcher passed to the factory, which
+ * validates byte length and nothing else. A single NUL byte costs 0.0001 ETH to launch with and
+ * makes Postgres reject the row: `invalid byte sequence for encoding "UTF8": 0x00`. That failure
+ * rolls back the whole batch, the cursor never advances, and the indexer retries the same range
+ * every couple of seconds for as long as it runs — the whole site stops updating for the price of
+ * one launch. The contract cannot be fixed retroactively, so the indexer has to defend itself.
+ */
+export function sanitizeText(value: string): string {
+  let out = '';
+  for (const ch of value) {
+    const code = ch.codePointAt(0) ?? 0;
+    // Everything below U+0020 plus DEL. Written as a code-point test rather than a character
+    // class so this source file does not itself contain the bytes it exists to remove.
+    if (code >= 0x20 && code !== 0x7f) out += ch;
+  }
+  return out.trim();
+}
+
 export type LaunchInsert = {
   token: string;
   stock: string;
@@ -235,9 +257,9 @@ export async function insertLaunches(db: Db, launches: readonly LaunchInsert[]) 
         l.creator.toLowerCase(),
         l.poolId.toLowerCase(),
         l.tokenIsCurrency0,
-        l.name,
-        l.symbol,
-        l.contractUri,
+        sanitizeText(l.name),
+        sanitizeText(l.symbol),
+        sanitizeText(l.contractUri),
         l.openingSqrtPriceX96.toString(),
         l.tickLower,
         l.tickUpper,
@@ -265,7 +287,14 @@ export async function updateLaunchMetadata(
   await db.query(
     `UPDATE launches SET description = $2, image_uri = $3, website = $4, twitter = $5, metadata_fetched_at = now()
      WHERE token = $1`,
-    [token.toLowerCase(), metadata.description, metadata.imageUri, metadata.website, metadata.twitter ?? null],
+    // Metadata comes from a URI the launcher chose, so it is no more trusted than the launch text.
+    [
+      token.toLowerCase(),
+      metadata.description === null ? null : sanitizeText(metadata.description),
+      metadata.imageUri === null ? null : sanitizeText(metadata.imageUri),
+      metadata.website === null ? null : sanitizeText(metadata.website),
+      metadata.twitter == null ? null : sanitizeText(metadata.twitter),
+    ],
   );
 }
 

@@ -413,8 +413,17 @@ contract StockPairFactory is IUnlockCallback, Ownable2Step, ReentrancyGuard {
         private
         pure
     {
-        uint256 length = bytes(value).length;
+        bytes calldata raw = bytes(value);
+        uint256 length = raw.length;
         if (length < minLength || length > maxLength) revert InvalidText();
+        // Control bytes are rejected because everything downstream has to store this text. A NUL is
+        // the sharp case: Postgres refuses it outright, so a name that is one NUL byte is a legal
+        // launch here and an unindexable row there. Indexers must defend themselves regardless --
+        // this contract cannot be changed once deployed -- but there is no reason to emit it.
+        for (uint256 i; i < length; ++i) {
+            uint8 c = uint8(raw[i]);
+            if (c < 0x20 || c == 0x7F) revert InvalidText();
+        }
     }
 
     function _readStockUsd8(address feed) private view returns (uint256) {
