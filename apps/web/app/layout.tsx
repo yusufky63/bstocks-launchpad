@@ -6,7 +6,7 @@ import { cookieToInitialState } from 'wagmi';
 
 import { AppShell } from '@/components/layout/app-shell';
 import { Providers } from '@/components/providers';
-import { BSTOCKS_X_HANDLE, BSTOCKS_X_URL } from '@/lib/twitter';
+import { BSTOCKS_X_HANDLE } from '@/lib/twitter';
 import { getWagmiConfig } from '@/lib/wagmi';
 
 import './globals.css';
@@ -53,7 +53,7 @@ export const metadata: Metadata = {
     title: 'BaseStocks Launchpad — Tokens priced in real stocks',
     description: DESCRIPTION,
   },
-  twitter: { card: 'summary_large_image', site: `@${BSTOCKS_X_HANDLE}` },
+  twitter: { card: 'summary_large_image', creator: `@${BSTOCKS_X_HANDLE}` },
   robots: { index: true, follow: true },
 };
 
@@ -62,7 +62,7 @@ const jsonLd = JSON.stringify({
   '@context': 'https://schema.org',
   '@graph': [
     { '@type': 'WebSite', name: 'BaseStocks Launchpad', url: APP_URL, description: DESCRIPTION },
-    { '@type': 'Organization', name: 'BaseStocks', url: 'https://basestocks.finance', sameAs: [BSTOCKS_X_URL] },
+    { '@type': 'Organization', name: 'BaseStocks', url: 'https://basestocks.finance' },
   ],
 });
 
