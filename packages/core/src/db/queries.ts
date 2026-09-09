@@ -770,6 +770,32 @@ export async function listCandles(
   return rows;
 }
 
+export type StockQuotePoint = { feed_updated_at: Date; price_usd8: string };
+
+/**
+ * The stock's quotes covering a window, plus the one still in effect when the window opens, so a
+ * caller can price each moment in the window with the quote that was live at the time rather than
+ * with whatever the price happens to be now.
+ */
+export async function listStockQuoteHistory(
+  db: Db,
+  stock: string,
+  from: Date,
+  to: Date,
+): Promise<StockQuotePoint[]> {
+  return db.query<StockQuotePoint>(
+    `SELECT feed_updated_at, price_usd8::text AS price_usd8
+     FROM stock_quote_history
+     WHERE stock = $1 AND feed_updated_at <= $3
+       AND feed_updated_at >= coalesce(
+         (SELECT max(feed_updated_at) FROM stock_quote_history
+           WHERE stock = $1 AND feed_updated_at <= $2),
+         $2)
+     ORDER BY feed_updated_at ASC`,
+    [stock.toLowerCase(), from, to],
+  );
+}
+
 export async function listHolders(db: Db, token: string, limit = 50): Promise<BalanceRow[]> {
   return db.query<BalanceRow>(
     `SELECT * FROM balances WHERE token = $1 AND balance_raw > 0

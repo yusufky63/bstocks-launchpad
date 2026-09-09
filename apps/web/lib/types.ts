@@ -47,7 +47,8 @@ export type SwapsResponse = { token: string; stock: { address: string; symbol: s
 export type HolderView = { rank: number; address: string; label: string | null; balance: number; sharePercent: number };
 export type HoldersResponse = { token: string; holderCount: number; holders: HolderView[]; concentration: HolderConcentration };
 
-export type CandleView = { time: number; open: number; high: number; low: number; close: number; volumeStock: number; volumeToken: number; trades: number };
+/** `stockUsd` is the quote that was live when the candle printed, not the latest one. */
+export type CandleView = { time: number; open: number; high: number; low: number; close: number; volumeStock: number; volumeToken: number; trades: number; stockUsd: number | null };
 export type CandlesResponse = { token: string; interval: '1m'; quote: { symbol: string; usd: number | null }; candles: CandleView[] };
 
 export type TokenFees = { totalStock: number; creatorStock: number; platformStock: number; totalUsd: number | null; creatorUsd: number | null; platformUsd: number | null; events: number; claimableStock: number | null; claimableUsd: number | null };

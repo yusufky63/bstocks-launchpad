@@ -66,14 +66,24 @@ export function ChartModule({ token, poolId, stockSymbol, creatorSwaps = [] }: {
 
   const series = useMemo(() => {
     const raw = data?.candles ?? [];
-    const factor = effectiveUnit === 'usd' && stockUsd ? stockUsd : 1;
-    return aggregate(raw, tf).map((c) => ({
+    // Price every minute with the quote that was live for it, then aggregate. Converting after
+    // aggregation would put one flat multiplier across the whole history, so a move in the stock
+    // would silently redraw candles that had already settled; and an hourly bar's high and low have
+    // to be the extremes of the dollar prices people actually saw, not of pool prices rescaled later.
+    const priced =
+      effectiveUnit === 'usd'
+        ? raw.map((c) => {
+            const at = c.stockUsd ?? stockUsd ?? 1;
+            return { ...c, open: c.open * at, high: c.high * at, low: c.low * at, close: c.close * at, volumeStock: c.volumeStock * at };
+          })
+        : raw;
+    return aggregate(priced, tf).map((c) => ({
       time: c.time,
-      open: c.open * factor,
-      high: c.high * factor,
-      low: c.low * factor,
-      close: c.close * factor,
-      volume: effectiveUnit === 'usd' && stockUsd ? c.volumeStock * stockUsd : c.volumeStock,
+      open: c.open,
+      high: c.high,
+      low: c.low,
+      close: c.close,
+      volume: c.volumeStock,
     }));
   }, [data, tf, effectiveUnit, stockUsd]);
 
