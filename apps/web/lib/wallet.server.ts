@@ -18,7 +18,8 @@ export type WalletSummary = {
   holdings: { token: string; name: string; symbol: string; imageUrl: string | null; stock: string; stockSymbol: string; balance: number; balanceRaw: string; priceUsd: number | null; valueUsd: number | null }[];
   holdingsUsd: number | null;
   createdFdvUsd: number | null;
-  claimable: { stock: string; symbol: string; ticker: string; amount: number; amountRaw: string; usd: number | null }[];
+  /** Null when the chain read failed: unknown, not "nothing to claim". */
+  claimable: { stock: string; symbol: string; ticker: string; amount: number; amountRaw: string; usd: number | null }[] | null;
   claimableUsd: number | null;
   recentSwaps: { txHash: string; token: string; name: string; symbol: string; side: 'buy' | 'sell'; amountToken: number; amountStock: number; amountUsd: number | null; stockSymbol: string; blockTime: string; isCreator: boolean }[];
   creator: CreatorOverview;
@@ -36,7 +37,7 @@ export async function readWalletSummary(db: Db, wallet: string): Promise<WalletS
       listMarkets(db, { creator: wallet, limit: 200 }),
       listHoldings(db, wallet),
       listSwaps(db, { trader: wallet, limit: 100 }),
-      readClaimable(wallet as Address).catch(() => []),
+      readClaimable(wallet as Address).catch(() => null),
       readCreatorOverview(db, wallet),
       readStocksResponse(),
     ]);
@@ -71,7 +72,7 @@ export async function readWalletSummary(db: Db, wallet: string): Promise<WalletS
         valueUsd: priceUsd === null ? null : balance * priceUsd,
       };
     });
-    const claimable = claimableRaw.map((c) => {
+    const claimable = claimableRaw === null ? null : claimableRaw.map((c) => {
       const decimals = stockDecimals.get(c.stock.toLowerCase()) ?? findStock(c.stock)?.decimals ?? 8;
       const amount = Number(c.amountRaw) / 10 ** decimals;
       const usd = stockUsd.get(c.stock.toLowerCase()) ?? null;
@@ -88,7 +89,7 @@ export async function readWalletSummary(db: Db, wallet: string): Promise<WalletS
       holdingsUsd: sum(holdings, 'valueUsd'),
       createdFdvUsd: created.length ? created.reduce((s, m) => s + (m.fdvUsd ?? 0), 0) : null,
       claimable,
-      claimableUsd: sum(claimable, 'usd'),
+      claimableUsd: claimable === null ? null : sum(claimable, 'usd'),
       recentSwaps: swaps.map((row) => {
         const market = markets.get(row.token);
         const decimals = market?.stock.decimals ?? stockDecimals.get(market?.stock.address ?? '') ?? 8;

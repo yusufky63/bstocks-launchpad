@@ -33,10 +33,19 @@ export function parseMetadata(value: unknown): TokenMetadata {
     const v = record[key];
     return typeof v === 'string' && v.trim().length > 0 ? v.trim().slice(0, 2_000) : null;
   };
+  // The website is rendered as a link and its hostname is read, so anything that is not an http(s)
+  // URL is dropped here rather than stored. A launcher writing "nvidia.com" -- a typo, not an
+  // attack -- would otherwise be enough to throw while rendering that token's page.
+  const httpUrl = (value: string | null): string | null => {
+    if (value === null) return null;
+    if (!URL.canParse(value)) return null;
+    const protocol = new URL(value).protocol;
+    return protocol === 'http:' || protocol === 'https:' ? value : null;
+  };
   return {
     description: text('description'),
     imageUri: text('image') ?? text('image_url') ?? text('imageUri'),
-    website: text('external_link') ?? text('external_url') ?? text('website'),
+    website: httpUrl(text('external_link') ?? text('external_url') ?? text('website')),
     twitter: normalizeTwitter(text('twitter') ?? text('x') ?? text('twitter_url')),
   };
 }

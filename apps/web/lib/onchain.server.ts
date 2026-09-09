@@ -59,9 +59,9 @@ export async function readLaunchOnchain(token: Address): Promise<OnchainLaunch |
 }
 
 /** Claimable fee balances for an account across every stock, straight from the hook. */
-export async function readClaimable(account: Address): Promise<{ stock: Address; symbol: string; amountRaw: string }[]> {
+export async function readClaimable(account: Address): Promise<{ stock: Address; symbol: string; amountRaw: string }[] | null> {
   const deployment = serverDeployment();
-  if (!deployment) return [];
+  if (!deployment) return null;
   const client = getPublicClient();
   const results = await client.multicall({
     contracts: BASE_STOCKS.map((stock) => ({
@@ -72,9 +72,13 @@ export async function readClaimable(account: Address): Promise<{ stock: Address;
     })),
     allowFailure: true,
   });
+  // A dropped entry and a zero balance are not the same thing. Silently discarding failures turned
+  // an RPC blip into "Claimable now $0.00" with no Claim button, on a screen that was at the same
+  // time showing the fees that wallet had earned. Null means unknown; the caller must say so.
+  if (results.some((r) => r.status !== 'success')) return null;
   return results.flatMap((result, index) => {
     const stock = BASE_STOCKS[index]!;
-    if (result.status !== 'success' || result.result === 0n) return [];
+    if (result.result === 0n) return [];
     return [{ stock: stock.address as Address, symbol: stock.symbol, amountRaw: (result.result as bigint).toString() }];
   });
 }

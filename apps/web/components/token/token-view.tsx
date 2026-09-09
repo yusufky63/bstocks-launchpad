@@ -131,7 +131,8 @@ export function TokenView({ address, initialData }: { address: string; initialDa
                 </div>
               </div>
               <div className="flex items-center gap-1.5 flex-wrap shrink-0">
-                {market.website && <IconLink href={market.website} label={new URL(market.website).hostname} icon={<Globe size={14} strokeWidth={1.75} />} />}
+                {/* Guarded again here: rows indexed before the URL check above can still hold junk. */}
+                {market.website && URL.canParse(market.website) && <IconLink href={market.website} label={new URL(market.website).hostname} icon={<Globe size={14} strokeWidth={1.75} />} />}
                 {market.twitter && <IconLink href={market.twitter} label={twitterHandle(market.twitter)} icon={<XIcon />} />}
                 {market.telegram && <IconLink href={market.telegram} label={telegramHandle(market.telegram)} icon={<Send size={13} strokeWidth={1.75} />} />}
                 <EditProfile key={market.profileUpdatedAt ?? 'launch'} market={market} />

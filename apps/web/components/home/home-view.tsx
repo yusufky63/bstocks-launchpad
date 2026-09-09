@@ -14,7 +14,7 @@ import type { MarketView, MarketsResponse, StatsResponse } from '@/lib/types';
 
 export function HomeView({ initialMarkets, initialStats }: { initialMarkets?: MarketsResponse; initialStats?: StatsResponse }) {
   // Home opts out of the fast poll: the lists should stay still, not reshuffle under the reader.
-  const { data: markets } = useMarkets({}, initialMarkets, { refetchInterval: 60_000 });
+  const { data: markets, isSuccess: marketsRead } = useMarkets({}, initialMarkets, { refetchInterval: 60_000 });
   const { data: stats } = useStats(initialStats);
   const rows = useMemo(() => markets?.markets ?? [], [markets]);
   const newest = rows.slice(0, 8);
@@ -56,7 +56,8 @@ export function HomeView({ initialMarkets, initialStats }: { initialMarkets?: Ma
             <dl className="mt-7 grid grid-cols-2 sm:grid-cols-4 gap-px bg-line border border-line rounded-[8px] overflow-hidden max-w-[640px]">
               {[
                 // The front door states the scale reached so far; "Top movers" below carries the day.
-                { label: 'Tokens launched', value: String(stats?.launches ?? rows.length) },
+                // rows is one page, so it would report 100 for any larger platform; show nothing rather than a wrong count.
+                { label: 'Tokens launched', value: stats ? formatNumber(stats.launches, 0) : '—' },
                 { label: 'Volume · all', value: stats?.volumeUsd ? formatUsd(stats.volumeUsd, { compact: true }) : '—' },
                 { label: 'Trades · all', value: stats?.swaps ? formatNumber(stats.swaps, 0) : '—' },
                 { label: 'Traders', value: stats ? formatNumber(stats.traders, 0) : '—' },
@@ -87,10 +88,18 @@ export function HomeView({ initialMarkets, initialStats }: { initialMarkets?: Ma
         ))}
         {newest.length === 0 && (
           <p className="px-4 py-6 text-[14px] text-ink-secondary">
-            No tokens yet.{' '}
-            <Link href="/create" className="text-primary font-medium">
-              Create the first one →
-            </Link>
+            {marketsRead ? (
+              <>
+                No tokens yet.{' '}
+                <Link href="/create" className="text-primary font-medium">
+                  Create the first one →
+                </Link>
+              </>
+            ) : (
+              // Only claim the launchpad is empty once a read actually came back empty. A failed
+              // markets read used to put "No tokens yet" on the front page of a live launchpad.
+              'Loading the latest launches…'
+            )}
           </p>
         )}
       </Module>

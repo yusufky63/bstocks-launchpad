@@ -11,7 +11,7 @@ import { stockPairHookAbi } from '@stockpair/core';
 
 import { StockTile } from '@/components/stock/stock-coin';
 import { Banner, TxLink } from '@/components/ui/display';
-import { Button } from '@/components/ui/primitives';
+import { Button, Empty} from '@/components/ui/primitives';
 import { builderDataSuffix } from '@/lib/attribution';
 import { publicEnv } from '@/lib/env';
 import { formatNumber, formatUsd } from '@/lib/format';
@@ -20,7 +20,7 @@ import { describeTradeError } from '@/lib/trade';
 export type Claimable = { stock: string; symbol: string; ticker: string; amount: number; amountRaw: string; usd: number | null };
 
 /** Creator fees accrued in the hook, claimed in one transaction. */
-export function ClaimFees({ wallet, claimable }: { wallet: string; claimable: Claimable[] }) {
+export function ClaimFees({ wallet, claimable }: { wallet: string; claimable: Claimable[] | null }) {
   const { address, chainId } = useAccount();
   const client = usePublicClient({ chainId: base.id });
   const router = useRouter();
@@ -28,6 +28,11 @@ export function ClaimFees({ wallet, claimable }: { wallet: string; claimable: Cl
   const [txHash, setTxHash] = useState<Hex | null>(null);
   const deployment = publicEnv.deployment;
   const isOwner = address?.toLowerCase() === wallet.toLowerCase() && chainId === base.id;
+  // Null means the chain read failed. Saying "nothing to claim" then would hide a real balance and,
+  // worse, hide the button that withdraws it.
+  if (claimable === null) {
+    return <Empty>Claimable fees could not be read from the chain just now. Reload in a moment — nothing is lost.</Empty>;
+  }
   const totalUsd = claimable.reduce((sum, c) => sum + (c.usd ?? 0), 0);
 
   const claim = useMutation({

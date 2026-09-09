@@ -68,7 +68,12 @@ export function CreateForm({ initialStocks }: { initialStocks?: StocksResponse }
 
   function validate(): Errors {
     const next: Errors = {};
-    if (name.trim().length < 1 || name.trim().length > 64) next.name = 'Use 1 to 64 characters.';
+    // The contract measures bytes, not characters. A 61-character Turkish name is 75 bytes, so a
+    // name that passes a character count here can be pinned to IPFS and then never launch.
+    const nameBytes = new TextEncoder().encode(name.trim()).length;
+    if (nameBytes < 1 || nameBytes > 64) {
+      next.name = nameBytes > 64 && name.trim().length <= 64 ? 'Too long for the contract: accented characters take more than one byte each. Shorten it a little.' : 'Use 1 to 64 characters.';
+    }
     if (!/^[A-Z0-9]{1,16}$/u.test(symbol)) next.symbol = 'Use 1 to 16 uppercase letters or digits.';
     if (description.length > 1_000) next.description = 'Keep the description under 1,000 characters.';
     if (website && !/^https:\/\/[^\s]+$/u.test(website)) next.website = 'Use a full https:// link.';
@@ -110,12 +115,20 @@ export function CreateForm({ initialStocks }: { initialStocks?: StocksResponse }
         chainId: base.id,
         dataSuffix: builderDataSuffix(),
       });
+      // Wait for the receipt before claiming the launch happened. Navigating on the hash alone left
+      // a cancelled or reverted launch showing "your token is on its way" forever, because the
+      // token page's poller treats a 404 as "not indexed yet" and keeps waiting.
+      setStep({ label: 'Waiting for Base to confirm…', txHash: hash });
+      const receipt = await client.waitForTransactionReceipt({ hash });
+      if (receipt.status !== 'success') throw new Error('The launch transaction reverted. Nothing was created.');
       return { token: predicted, hash };
     },
     onSuccess: ({ token, hash }) => {
       setStep({ label: 'Submitted. Opening the token page…', txHash: hash });
       router.push(`/token/${token.toLowerCase()}?tx=${hash}`);
     },
+    // The receipt is awaited inside the mutation, so a revert or a cancelled transaction lands here
+    // instead of navigating to a page that waits for a token that will never exist.
     onError: () => setStep(null),
   });
 
