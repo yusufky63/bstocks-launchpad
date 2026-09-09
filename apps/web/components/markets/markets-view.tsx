@@ -94,6 +94,10 @@ export function MarketsView({ initialMarkets, initialStocks, initialStock }: { i
     });
   }, [all, screen, sort]);
 
+  // Two minutes is many indexer ticks; past that the data has stopped moving for a real reason.
+  const asOf = markets.data?.asOf;
+  const stale = Boolean(asOf && Date.now() - new Date(asOf).getTime() > 2 * 60_000);
+
   const selectedStock = stocks.find((s) => s.address === stock);
 
   return (
@@ -103,7 +107,17 @@ export function MarketsView({ initialMarkets, initialStocks, initialStock }: { i
         title={selectedStock ? `${selectedStock.symbol} pairs` : 'Markets'}
         lead={
           <span className="inline-flex items-center gap-2 flex-wrap">
-            <span className="live-dot" /> Live · {markets.data ? <>updated <TimeAgo value={markets.data.asOf} placeholder="just now" /></> : 'loading'} · refreshes every {screen === 'new' ? '3' : '5'} s
+            {/* asOf is the indexer's last write. If that stops advancing the board is not live, however
+                often this page polls, so the dot and the word go away rather than reassuring falsely. */}
+            {stale ? (
+              <>
+                <span className="text-warning-fg">Not updating</span> · last indexed <TimeAgo value={markets.data!.asOf} placeholder="just now" />
+              </>
+            ) : (
+              <>
+                <span className="live-dot" /> Live · {markets.data ? <>updated <TimeAgo value={markets.data.asOf} placeholder="just now" /></> : 'loading'} · refreshes every {screen === 'new' ? '3' : '5'} s
+              </>
+            )}
           </span>
         }
         action={

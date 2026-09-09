@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { listMarkets } from '@stockpair/core/db';
+import { listMarkets, readCursor } from '@stockpair/core/db';
 
 import { error, json, limitSchema, parseAddressParam } from '@/lib/api.server';
 import { cached, TTL } from '@/lib/cache.server';
@@ -37,6 +37,8 @@ export async function GET(request: Request): Promise<Response> {
       offset,
     }),
   );
+  // Same rule as the server reader: asOf is the indexer's progress, not this response's clock.
+  const cursor = await readCursor(db);
   const now = new Date();
-  return json({ markets: rows.map((row) => toMarketView(row, now)), asOf: now.toISOString() });
+  return json({ markets: rows.map((row) => toMarketView(row, now)), asOf: cursor ? new Date(cursor.updated_at).toISOString() : now.toISOString() });
 }

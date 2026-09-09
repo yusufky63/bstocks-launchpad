@@ -4,7 +4,7 @@ import type { MarketView } from './market-view';
 
 export type { MarketView };
 
-export type FeedStatus = 'live' | 'paused' | 'unknown';
+export type FeedStatus = 'live' | 'holding' | 'unknown';
 
 /** One row of GET /api/stocks. */
 export type StockView = {

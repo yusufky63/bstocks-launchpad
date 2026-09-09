@@ -61,7 +61,7 @@ export function StocksView({ initialStocks }: { initialStocks?: StocksResponse }
                   </span>
                   {s.enabled ? (
                     <Badge tone={s.feedStatus === 'live' ? 'positive' : 'neutral'} title={s.feedUpdatedAt ? `Chainlink updated ${new Date(s.feedUpdatedAt).toUTCString()}` : undefined}>
-                      {s.feedStatus === 'live' ? 'feed live' : s.feedStatus === 'paused' ? 'last close' : 'no reading'}
+                      {s.feedStatus === 'live' ? 'feed live' : s.feedStatus === 'holding' ? 'last close' : 'no reading'}
                     </Badge>
                   ) : (
                     <Badge tone="warning" title="Coinbase has not minted this stock on Base yet; launches against it are closed until it is issued">

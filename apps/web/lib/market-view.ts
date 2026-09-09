@@ -37,7 +37,7 @@ export type MarketView = {
   holders: number;
   stockUsd: number | null;
   stockFeedUpdatedAt: string | null;
-  stockFeedStatus: 'live' | 'paused' | 'unknown';
+  stockFeedStatus: 'live' | 'holding' | 'unknown';
   lastTradeAt: string | null;
   txHash: string;
   blockNumber: string;
@@ -48,9 +48,12 @@ const SUPPLY = 1_000_000_000;
 export function feedStatus(feedUpdatedAt: Date | string | null): MarketView['stockFeedStatus'] {
   if (!feedUpdatedAt) return 'unknown';
   const age = Date.now() - new Date(feedUpdatedAt).getTime();
-  // Chainlink equity feeds publish 24/5; more than three hours without a heartbeat means the
-  // market (and the feed) is closed for the weekend or a holiday.
-  return age < 3 * 60 * 60 * 1000 ? 'live' : 'paused';
+  // Base documents these feeds as updating on a 0.5% move or a 24-hour heartbeat, holding the last
+  // close outside market hours. So age alone cannot tell a halted oracle from a quiet Saturday, and
+  // this used to call anything over three hours "paused" — an assertion the data does not support.
+  // "holding" says only what we observed: the last reading is old and is what we are pricing with.
+  // A genuinely paused oracle is a registry flag we do not read; do not infer it from a timestamp.
+  return age < 3 * 60 * 60 * 1000 ? 'live' : 'holding';
 }
 
 export function toMarketView(row: MarketRow, now = new Date()): MarketView {

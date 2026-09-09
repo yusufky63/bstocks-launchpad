@@ -12,7 +12,7 @@ import type { MarketView } from '@/lib/types';
 export function PairBadge({ market, className }: { market: Pick<MarketView, 'stock' | 'stockFeedStatus'>; className?: string }) {
   const live = market.stockFeedStatus === 'live';
   return (
-    <Badge tone={live ? 'primary' : 'neutral'} className={cx('pl-1', className)} title={live ? `${market.stock.symbol} feed updating` : market.stockFeedStatus === 'paused' ? `${market.stock.symbol} feed holds the last close (market closed)` : 'No feed reading yet'}>
+    <Badge tone={live ? 'primary' : 'neutral'} className={cx('pl-1', className)} title={live ? `${market.stock.symbol} feed updating` : market.stockFeedStatus === 'holding' ? `${market.stock.symbol} feed holds the last close (market closed)` : 'No feed reading yet'}>
       <StockTile ticker={market.stock.ticker} size={14} className="rounded-[3px] border-0" />
       {market.stock.symbol}
       <span className={cx('inline-block w-1.5 h-1.5 rounded-full', live ? 'bg-positive-fg' : 'bg-ink-muted')} aria-hidden />

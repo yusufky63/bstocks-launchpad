@@ -209,7 +209,7 @@ export function CreateForm({ initialStocks }: { initialStocks?: StocksResponse }
                     <span className="block text-[12px] text-ink-secondary truncate">{s.name}</span>
                     <span className="block font-mono num text-[11px] text-ink-muted">
                       {formatUsd(s.priceUsd)}
-                      {s.feedStatus === 'paused' ? ' · last close' : ''} · {s.launches} paired
+                      {s.feedStatus === 'holding' ? ' · last close' : ''} · {s.launches} paired
                     </span>
                   </span>
                 </button>

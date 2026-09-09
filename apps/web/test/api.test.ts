@@ -267,7 +267,9 @@ describe('market view helpers', () => {
   it('classifies feed freshness', () => {
     expect(feedStatus(null)).toBe('unknown');
     expect(feedStatus(new Date())).toBe('live');
-    expect(feedStatus(new Date(Date.now() - 5 * 60 * 60_000))).toBe('paused');
+    // Old enough that we are pricing with a held reading -- which is not the same as the oracle
+    // being paused, a claim the timestamp alone cannot support.
+    expect(feedStatus(new Date(Date.now() - 5 * 60 * 60_000))).toBe('holding');
   });
 
   it('formats launch age and prices', () => {
