@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useState } from 'react';
 
+import { XMark } from '@/components/brand/logo';
 import { PairBadge } from '@/components/markets/market-rows';
 import { TokenLogo } from '@/components/stock/stock-coin';
 import { TradePanel } from '@/components/trade/trade-panel';
@@ -22,12 +23,6 @@ import type { TokenResponse } from '@/lib/types';
 import { ChartModule } from './chart-module';
 import { EditProfile } from './edit-profile';
 import { TokenRecords } from './token-records';
-
-const XIcon = ({ size = 14 }: { size?: number }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-    <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
-  </svg>
-);
 
 /**
  * Token detail. Desktop: chart + records on the left, the trade panel sticky on the right.
@@ -133,7 +128,7 @@ export function TokenView({ address, initialData }: { address: string; initialDa
               <div className="flex items-center gap-1.5 flex-wrap shrink-0">
                 {/* Guarded again here: rows indexed before the URL check above can still hold junk. */}
                 {market.website && URL.canParse(market.website) && <IconLink href={market.website} label={new URL(market.website).hostname} icon={<Globe size={14} strokeWidth={1.75} />} />}
-                {market.twitter && <IconLink href={market.twitter} label={twitterHandle(market.twitter)} icon={<XIcon />} />}
+                {market.twitter && <IconLink href={market.twitter} label={twitterHandle(market.twitter)} icon={<XMark />} />}
                 {market.telegram && <IconLink href={market.telegram} label={telegramHandle(market.telegram)} icon={<Send size={13} strokeWidth={1.75} />} />}
                 <EditProfile key={market.profileUpdatedAt ?? 'launch'} market={market} />
               </div>

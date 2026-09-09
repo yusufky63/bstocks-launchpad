@@ -1,3 +1,7 @@
+/** BaseStocks on X. One constant so the header, the metadata and the JSON-LD never drift apart. */
+export const BSTOCKS_X_HANDLE = 'xBaseStocks';
+export const BSTOCKS_X_URL = `https://x.com/${BSTOCKS_X_HANDLE}`;
+
 /** Accepts @handle, handle, or an x.com / twitter.com URL; returns the canonical profile URL or null. */
 export function normalizeTwitter(value: string | null | undefined): string | null {
   if (!value) return null;
