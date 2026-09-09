@@ -1,4 +1,9 @@
+import { BASE_CONTRACTS } from '../chain';
+
 import type { Db, Row } from './client';
+
+/** The v4 PoolManager custodies every pool's tokens; it is never a holder. */
+const POOL_MANAGER = BASE_CONTRACTS.poolManager.toLowerCase();
 
 // ---------------------------------------------------------------------------------------------
 // Row types (all bigint/numeric columns are strings; timestamps are Date)
@@ -360,29 +365,31 @@ export async function insertSwap(db: Db, s: SwapInsert) {
  */
 export async function addSwapFees(
   db: Db,
-  fees: readonly { txHash: string; poolId: string; feeStockRaw: bigint }[],
+  fees: readonly { txHash: string; logIndex: number; poolId: string; feeStockRaw: bigint }[],
 ) {
-  const totals = new Map<string, { txHash: string; poolId: string; amount: bigint }>();
+  // Attribute each fee to the swap that produced it. Keying on (tx, pool) alone matched every swap
+  // in a transaction that touched the same pool twice -- an arb route -- and gave each of them the
+  // combined total. Setting rather than adding also keeps a re-run from stacking.
+  const totals = new Map<string, { txHash: string; logIndex: number; amount: bigint }>();
   for (const fee of fees) {
-    const poolId = fee.poolId.toLowerCase();
-    const key = `${fee.txHash}|${poolId}`;
+    const key = `${fee.txHash}|${fee.logIndex}`;
     const current = totals.get(key);
     if (current) current.amount += fee.feeStockRaw;
-    else totals.set(key, { txHash: fee.txHash, poolId, amount: fee.feeStockRaw });
+    else totals.set(key, { txHash: fee.txHash, logIndex: fee.logIndex, amount: fee.feeStockRaw });
   }
   for (const chunk of chunked([...totals.values()], 3)) {
     await db.query(
-      `UPDATE swaps s SET fee_stock_raw = s.fee_stock_raw + v.fee
-       FROM (VALUES ${placeholders(chunk.length, 3, ['text', 'text', 'numeric'])})
-         AS v(tx_hash, pool_id, fee)
-       WHERE s.tx_hash = v.tx_hash AND s.pool_id = v.pool_id`,
-      chunk.flatMap((f) => [f.txHash, f.poolId, f.amount.toString()]),
+      `UPDATE swaps s SET fee_stock_raw = v.fee
+       FROM (VALUES ${placeholders(chunk.length, 3, ['text', 'int', 'numeric'])})
+         AS v(tx_hash, log_index, fee)
+       WHERE s.tx_hash = v.tx_hash AND s.log_index = v.log_index`,
+      chunk.flatMap((f) => [f.txHash, f.logIndex, f.amount.toString()]),
     );
   }
 }
 
-export async function setSwapFee(db: Db, txHash: string, poolId: string, feeStockRaw: bigint) {
-  await addSwapFees(db, [{ txHash, poolId, feeStockRaw }]);
+export async function setSwapFee(db: Db, txHash: string, logIndex: number, poolId: string, feeStockRaw: bigint) {
+  await addSwapFees(db, [{ txHash, logIndex, poolId, feeStockRaw }]);
 }
 
 export type TransferInsert = {
@@ -740,9 +747,12 @@ const MARKET_SELECT = `
     FROM swaps WHERE swaps.token = l.token
   ) vol ON true
   LEFT JOIN LATERAL (
+    -- The Uniswap PoolManager holds the locked supply; it is liquidity, not a holder. Counting it
+    -- here while holderConcentration excludes it put "Holders 2" and "1 wallets" on one screen.
     SELECT count(*) AS holder_count FROM balances
     WHERE balances.token = l.token AND balance_raw > 0
       AND holder <> '0x000000000000000000000000000000000000dead'
+      AND holder <> lower('${POOL_MANAGER}')
   ) h ON true`;
 
 export async function listMarkets(
@@ -1063,7 +1073,8 @@ export async function creatorOverview(db: Db, creator: string): Promise<CreatorO
             (SELECT count(DISTINCT s.trader) FROM swaps s JOIN launches l ON l.token = s.token WHERE l.creator = $1)::int AS unique_traders,
             (SELECT count(*) FROM balances b JOIN launches l ON l.token = b.token
               WHERE l.creator = $1 AND b.balance_raw > 0
-                AND b.holder <> '0x000000000000000000000000000000000000dead')::int AS holders`,
+                AND b.holder <> '0x000000000000000000000000000000000000dead'
+                AND b.holder <> lower('${POOL_MANAGER}'))::int AS holders`,
     [c],
   );
   const volumeRows = db.query<StockAmountRow>(
@@ -1211,7 +1222,8 @@ export async function platformStats(db: Db): Promise<PlatformStatsRow> {
             (SELECT count(*) FROM swaps WHERE block_time > now() - interval '24 hours')::int AS swaps_24h,
             (SELECT count(DISTINCT trader) FROM swaps)::int AS traders,
             (SELECT count(*) FROM balances
-              WHERE balance_raw > 0 AND holder <> '0x000000000000000000000000000000000000dead')::int AS holders`,
+              WHERE balance_raw > 0 AND holder <> '0x000000000000000000000000000000000000dead'
+                AND holder <> lower('${POOL_MANAGER}'))::int AS holders`,
   );
   const volumeRows = db.query<StockAmountRow & { day_raw: string }>(
     `SELECT l.stock, st.symbol, st.decimals,

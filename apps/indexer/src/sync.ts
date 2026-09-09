@@ -267,7 +267,19 @@ export async function syncOnce(options: SyncOptions): Promise<SyncResult> {
 
   const feeRows: FeeEventInsert[] = [];
   const claimRows: FeeClaimInsert[] = [];
-  const swapFees: { txHash: string; poolId: string; feeStockRaw: bigint }[] = [];
+  // Pair each fee with the swap that produced it. Within one transaction and pool, the hook's fee
+  // events and the PoolManager's swaps are both emitted in execution order, so the nth fee belongs
+  // to the nth swap. Keying on the transaction and pool alone would hand a route that touches one
+  // pool twice the combined total on both of its rows.
+  const swapsByPool = new Map<string, typeof swapRows>();
+  for (const row of swapRows) {
+    const key = `${row.txHash}|${row.poolId.toLowerCase()}`;
+    const list = swapsByPool.get(key);
+    if (list) list.push(row);
+    else swapsByPool.set(key, [row]);
+  }
+  const feeOrdinal = new Map<string, number>();
+  const swapFees: { txHash: string; logIndex: number; poolId: string; feeStockRaw: bigint }[] = [];
   for (const raw of contractLogs) {
     if (raw.blockNumber === null || raw.transactionHash === null || raw.logIndex === null) continue;
     const fee = decodeFeeCharged(raw);
@@ -287,7 +299,11 @@ export async function syncOnce(options: SyncOptions): Promise<SyncResult> {
         blockNumber: raw.blockNumber,
         blockTime: blockTime(raw.blockNumber),
       });
-      swapFees.push({ txHash: raw.transactionHash, poolId: fee.poolId, feeStockRaw: fee.amount });
+      const pairKey = `${raw.transactionHash}|${fee.poolId.toLowerCase()}`;
+      const ordinal = feeOrdinal.get(pairKey) ?? 0;
+      feeOrdinal.set(pairKey, ordinal + 1);
+      const target = swapsByPool.get(pairKey)?.[ordinal];
+      if (target) swapFees.push({ txHash: target.txHash, logIndex: target.logIndex, poolId: fee.poolId, feeStockRaw: fee.amount });
       continue;
     }
     const claim = decodeFeesClaimed(raw);

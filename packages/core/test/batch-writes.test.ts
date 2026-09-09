@@ -191,19 +191,25 @@ describe('insertSwaps, addSwapFees and rebuildCandles', () => {
       },
     ]);
 
-    // Two FeeCharged logs in one transaction: the total lands on every swap of that tx and pool,
-    // which is what the per-row updates did one at a time.
+    // Two swaps through one pool in one transaction, each with its own fee. Each fee belongs to the
+    // swap it was charged on; keying the update on the transaction and pool alone gave both rows
+    // the combined 7, which is what an arb route through the same pool would have produced.
     await addSwapFees(db, [
-      { txHash: '0xswap1', poolId: POOL, feeStockRaw: 3n },
-      { txHash: '0xswap1', poolId: POOL, feeStockRaw: 4n },
-      { txHash: '0xswap2', poolId: POOL, feeStockRaw: 9n },
+      { txHash: '0xswap1', logIndex: 0, poolId: POOL, feeStockRaw: 3n },
+      { txHash: '0xswap1', logIndex: 1, poolId: POOL, feeStockRaw: 4n },
+      { txHash: '0xswap2', logIndex: 0, poolId: POOL, feeStockRaw: 9n },
     ]);
 
     const swaps = await listSwaps(db, { token: TOKEN, limit: 10 });
     const fees = new Map(swaps.map((s) => [`${s.tx_hash}|${s.log_index}`, s.fee_stock_raw]));
-    expect(fees.get('0xswap1|0')).toBe('7');
-    expect(fees.get('0xswap1|1')).toBe('7');
+    expect(fees.get('0xswap1|0')).toBe('3');
+    expect(fees.get('0xswap1|1')).toBe('4');
     expect(fees.get('0xswap2|0')).toBe('9');
+
+    // Setting rather than adding, so re-running the same range cannot stack fees onto a row.
+    await addSwapFees(db, [{ txHash: '0xswap1', logIndex: 0, poolId: POOL, feeStockRaw: 3n }]);
+    const again = await listSwaps(db, { token: TOKEN, limit: 10 });
+    expect(again.find((s) => s.tx_hash === '0xswap1' && s.log_index === 0)?.fee_stock_raw).toBe('3');
   });
 
   it('builds several minute buckets in one call and leaves empty ones alone', async () => {

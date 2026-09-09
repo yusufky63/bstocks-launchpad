@@ -178,6 +178,11 @@ CREATE TABLE IF NOT EXISTS indexer_cursor (
 
 -- Additive changes (idempotent). Version 2: X profile in metadata, stock icons.
 ALTER TABLE launches ADD COLUMN IF NOT EXISTS twitter text;
+
+-- Version 5: metadata backfill needs to give up. Without an attempt count a URI that never resolves
+-- stays at the head of the pending set forever, and each pass pays its timeout again.
+ALTER TABLE launches ADD COLUMN IF NOT EXISTS metadata_attempts integer NOT NULL DEFAULT 0;
+ALTER TABLE launches ADD COLUMN IF NOT EXISTS metadata_last_attempt_at timestamptz;
 ALTER TABLE stocks ADD COLUMN IF NOT EXISTS image_uri text;
 
 -- Version 3: creator-signed profile overrides. Name and symbol stay onchain and immutable; these

@@ -76,6 +76,9 @@ export async function fetchMetadata(
   }
 }
 
+/** How many times a URI is retried before it is left alone. */
+const MAX_METADATA_ATTEMPTS = 6;
+
 /** Fills description/image/website for launches that still lack metadata. */
 export async function backfillMetadata(
   db: Db,
@@ -83,15 +86,29 @@ export async function backfillMetadata(
   fetchImpl: typeof fetch = fetch,
   limit = 20,
 ): Promise<number> {
-  const rows = await db.query<{ token: string; contract_uri: string }>(
-    `SELECT token, contract_uri FROM launches WHERE metadata_fetched_at IS NULL
+  // Back off between attempts and stop after a few. A contractURI is whatever the launcher passed
+  // in; one that resolves to a host that accepts and hangs used to sit at the head of this set
+  // forever, paying its timeout on every idle poll and holding up the chain sync behind it.
+  const rows = await db.query<{ token: string; contract_uri: string; metadata_attempts: number }>(
+    `SELECT token, contract_uri, metadata_attempts FROM launches
+     WHERE metadata_fetched_at IS NULL
+       AND metadata_attempts < $2
+       AND (metadata_last_attempt_at IS NULL
+            OR metadata_last_attempt_at < now() - (interval '1 minute' * power(4, metadata_attempts)))
      ORDER BY launched_at DESC LIMIT $1`,
-    [limit],
+    [limit, MAX_METADATA_ATTEMPTS],
   );
   let filled = 0;
   for (const row of rows) {
     const metadata = await fetchMetadata(row.contract_uri, gateway, fetchImpl);
-    if (!metadata) continue;
+    if (!metadata) {
+      await db.query(
+        `UPDATE launches SET metadata_attempts = metadata_attempts + 1, metadata_last_attempt_at = now()
+         WHERE token = $1`,
+        [row.token],
+      );
+      continue;
+    }
     await updateLaunchMetadata(db, row.token, metadata);
     filled += 1;
   }

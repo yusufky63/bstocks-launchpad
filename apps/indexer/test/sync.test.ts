@@ -234,7 +234,9 @@ describe('syncOnce', () => {
     const market = await readMarket(db, TOKEN);
     expect(market?.symbol).toBe('TEST');
     expect(market?.token_is_currency0).toBe(TOKEN_IS_CURRENCY0);
-    expect(market?.holder_count).toBe(2); // pool manager and trader (dead sink excluded)
+    // The PoolManager custodies the locked supply; it is liquidity, not a holder. Counting it here
+    // while holderConcentration excluded it put two different holder numbers on one screen.
+    expect(market?.holder_count).toBe(1); // the trader only
     expect(market?.trades_24h).toBe(0); // fake block time is in 2025 relative to now()
 
     const swaps = await listSwaps(db, { token: TOKEN });
