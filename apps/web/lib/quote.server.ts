@@ -111,8 +111,15 @@ export async function quoteExactIn(db: Db, request: QuoteRequest): Promise<Quote
   const midPrice = e30ToNumber(stockPerTokenE30(slot0[0], tokenIsCurrency0, stockDecimals));
   const amountInWhole = Number(request.amountIn) / 10 ** (request.side === 'buy' ? stockDecimals : 18);
   const amountOutWhole = Number(amountOut) / 10 ** (request.side === 'buy' ? 18 : stockDecimals);
+  // Net the hook's fee out before deriving the execution price, so "price impact" measures how far
+  // this order moves the pool -- which is what the review sheet says it measures. Dividing the gross
+  // input by the net output folded the 1% fee into the number, double-counting a cost the row below
+  // it already shows and tripping the 5% warning about a percentage point early.
+  const feeFraction = Number(feeBps) / 10_000;
+  const netInWhole = request.side === 'buy' ? amountInWhole * (1 - feeFraction) : amountInWhole;
+  const netOutWhole = request.side === 'buy' ? amountOutWhole : amountOutWhole / (1 - feeFraction);
   const executionPrice =
-    request.side === 'buy' ? amountInWhole / amountOutWhole : amountOutWhole / amountInWhole;
+    request.side === 'buy' ? netInWhole / amountOutWhole : netOutWhole / amountInWhole;
   const impact = midPrice > 0 && Number.isFinite(executionPrice)
     ? request.side === 'buy'
       ? ((executionPrice - midPrice) / midPrice) * 100
