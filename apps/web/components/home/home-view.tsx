@@ -18,7 +18,10 @@ export function HomeView({ initialMarkets, initialStats }: { initialMarkets?: Ma
   const { data: stats } = useStats(initialStats);
   const rows = useMemo(() => markets?.markets ?? [], [markets]);
   const newest = rows.slice(0, 8);
-  const top = useMemo(() => [...rows].sort((a, b) => (b.volume24hUsd ?? 0) - (a.volume24hUsd ?? 0) || (b.fdvUsd ?? 0) - (a.fdvUsd ?? 0)).slice(0, 5), [rows]);
+  // Ranked by the query rather than by sorting the page we happen to hold: past a hundred tokens a
+  // real mover would otherwise never reach this panel, however much it traded.
+  const { data: ranked } = useMarkets({ limit: 5, orderBy: 'volume24h' }, undefined, { refetchInterval: 60_000 });
+  const top = useMemo(() => ranked?.markets ?? [...rows].sort((a, b) => (b.volume24hUsd ?? 0) - (a.volume24hUsd ?? 0) || (b.fdvUsd ?? 0) - (a.fdvUsd ?? 0)).slice(0, 5), [ranked, rows]);
   const movers = useMemo(
     () =>
       rows

@@ -757,7 +757,16 @@ const MARKET_SELECT = `
 
 export async function listMarkets(
   db: Db,
-  options: { stock?: string; creator?: string; tokens?: readonly string[]; search?: string; limit?: number; offset?: number } = {},
+  options: {
+    stock?: string;
+    creator?: string;
+    tokens?: readonly string[];
+    search?: string;
+    limit?: number;
+    offset?: number;
+    /** Default 'newest'. 'volume24h' ranks by traded value so a mover outside the newest page can surface. */
+    orderBy?: 'newest' | 'volume24h';
+  } = {},
 ): Promise<MarketRow[]> {
   const clauses: string[] = [];
   const params: unknown[] = [];
@@ -785,8 +794,16 @@ export async function listMarkets(
   params.push(Math.max(options.offset ?? 0, 0));
   const offsetIndex = params.length;
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+  // Ranking by traded value has to happen here, not in the caller: a caller can only sort the page
+  // it was given, so a token doing real volume outside the newest N could never surface at all.
+  // Volume is summed in stock units, so it is multiplied by the stock's quote to compare across
+  // pairs -- NVDAc and SNDKc differ by an order of magnitude in price.
+  const order =
+    options.orderBy === 'volume24h'
+      ? `coalesce(vol.volume_stock_raw, 0) * coalesce(q.price_usd8, 0) DESC, l.launched_at DESC`
+      : `l.launched_at DESC`;
   return db.query<MarketRow>(
-    `${MARKET_SELECT} ${where} ORDER BY l.launched_at DESC LIMIT $${limitIndex} OFFSET $${offsetIndex}`,
+    `${MARKET_SELECT} ${where} ORDER BY ${order} LIMIT $${limitIndex} OFFSET $${offsetIndex}`,
     params,
   );
 }

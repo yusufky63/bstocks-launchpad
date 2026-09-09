@@ -58,12 +58,13 @@ export function useStocks(initialData?: StocksResponse, opts: Opts<StocksRespons
   });
 }
 
-export function useMarkets(params: { stock?: string; q?: string; creator?: string; limit?: number } = {}, initialData?: MarketsResponse, opts: Opts<MarketsResponse> = {}) {
+export function useMarkets(params: { stock?: string; q?: string; creator?: string; limit?: number; orderBy?: 'newest' | 'volume24h' } = {}, initialData?: MarketsResponse, opts: Opts<MarketsResponse> = {}) {
   const search = new URLSearchParams();
   if (params.stock) search.set('stock', params.stock);
   if (params.q?.trim()) search.set('q', params.q.trim());
   if (params.creator) search.set('creator', params.creator);
   search.set('limit', String(params.limit ?? 100));
+  if (params.orderBy) search.set('orderBy', params.orderBy);
   const key = Object.fromEntries(search);
   return useQuery<MarketsResponse, Error>({
     queryKey: qk.markets(key),
