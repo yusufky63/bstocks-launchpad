@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useMemo, useState, type ReactNode } from 'react';
 
 import { Tabs } from '@/components/ui/controls';
-import { AddressLabel, Named, TimeAgo, TxLink } from '@/components/ui/display';
+import { AddressLabel, Banner, Named, TimeAgo, TxLink } from '@/components/ui/display';
 import { Empty, KeyValue, Skeleton, cx } from '@/components/ui/primitives';
 import { formatDateTime, formatNumber, formatPct, formatRatio, formatUsd, shortAddress } from '@/lib/format';
 import { apiGet, useHolders, useSwaps } from '@/lib/queries';
@@ -247,22 +247,7 @@ export function TokenRecords({ market, links, fees, trades }: { market: MarketVi
       {tab === 'details' && (
         <div className="p-4 flex flex-col gap-1">
           {market.description && <p className="text-[14px] text-ink-secondary mb-2 max-w-[70ch]">{market.description}</p>}
-          {links && (
-            <div className="flex flex-wrap gap-1.5 pb-2">
-              {(
-                [
-                  ['DexScreener', links.dexscreener],
-                  ['GeckoTerminal', links.geckoterminal],
-                  ['Uniswap', links.uniswap],
-                  ['BaseScan', links.basescan],
-                ] as const
-              ).map(([label, href]) => (
-                <a key={label} href={href} target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-[6px] border border-line text-[12px] text-ink-secondary hover:text-ink hover:border-line-strong transition-fast">
-                  <ExternalLink size={12} strokeWidth={1.75} /> {label}
-                </a>
-              ))}
-            </div>
-          )}
+          <OfficialPool market={market} links={links} />
           <KeyValue k="Website" v={market.website ? <a href={market.website} target="_blank" rel="noreferrer noopener" className="text-primary">{market.website}</a> : '—'} mono={false} />
           <KeyValue k="X" v={market.twitter ? <a href={market.twitter} target="_blank" rel="noreferrer noopener" className="text-primary">{market.twitter}</a> : '—'} mono={false} />
           <KeyValue k="Telegram" v={market.telegram ? <a href={market.telegram} target="_blank" rel="noreferrer noopener" className="text-primary">{market.telegram}</a> : '—'} mono={false} />
@@ -270,7 +255,7 @@ export function TokenRecords({ market, links, fees, trades }: { market: MarketVi
           <KeyValue k="Token" v={<AddressLabel address={market.token} explorer kind="token" chars={8} />} />
           <KeyValue k="Creator" v={<Link href={`/wallet/${market.creator}`} className="text-primary font-mono">{shortAddress(market.creator, 8)}</Link>} />
           <KeyValue k="Paired stock" v={<span className="inline-flex items-center gap-2">{market.stock.symbol} <AddressLabel address={market.stock.address} explorer kind="token" showCopy={false} /></span>} />
-          <KeyValue k="Pool id" v={`${market.poolId.slice(0, 10)}…${market.poolId.slice(-6)}`} />
+          <KeyValue k="Pool id" v={<AddressLabel address={market.poolId} chars={10} />} />
           <KeyValue k="Launch tx" v={<TxLink hash={market.txHash}>{shortAddress(market.txHash, 8)}</TxLink>} />
           <KeyValue k="Launched" v={formatDateTime(market.launchedAt)} />
           <KeyValue k="Supply" v="1,000,000,000 · 18 decimals · no admin, no mint, no pause" mono={false} />
@@ -280,5 +265,40 @@ export function TokenRecords({ market, links, fees, trades }: { market: MarketVi
         </div>
       )}
     </>
+  );
+}
+
+/**
+ * The one pool this token was launched into, and a warning about the others. Nothing stops a
+ * stranger from opening a second Uniswap pool against USDC or ETH once the token exists; those
+ * pools hold a few dollars, charge no fee, and their liquidity can leave whenever its owner likes.
+ * Every link here opens our pool rather than the token page that lists all of them side by side.
+ */
+function OfficialPool({ market, links }: { market: MarketView; links?: TokenDetails['links'] }) {
+  return (
+    <div className="flex flex-col gap-2 pb-3">
+      <Banner tone="warning">
+        <strong className="font-medium">Trade this token only in the {market.symbol} / {market.stock.symbol} pool.</strong>{' '}
+        Anyone can open another Uniswap pool for {market.symbol} against USDC or ETH. Those pools are not ours: their
+        liquidity is not locked, they pay no fee to the creator, and the price they show is whatever their owner set.
+        Every link below opens our pool; its id is in the table underneath.
+      </Banner>
+      {links && (
+        <div className="flex flex-wrap gap-1.5">
+          {(
+            [
+              ['DexScreener', links.dexscreener],
+              ['GeckoTerminal', links.geckoterminal],
+              ['Uniswap', links.uniswap],
+              ['BaseScan', links.basescan],
+            ] as const
+          ).map(([label, href]) => (
+            <a key={label} href={href} target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-[6px] border border-line text-[12px] text-ink-secondary hover:text-ink hover:border-line-strong transition-fast">
+              <ExternalLink size={12} strokeWidth={1.75} /> {label}
+            </a>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

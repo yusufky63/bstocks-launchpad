@@ -147,7 +147,13 @@ describe('read APIs with one indexed launch', () => {
     expect(response.body.details.pool).toBeNull(); // no contracts configured in tests: no live pool read
     expect(response.body.details.fees.events).toBe(0);
     expect(response.body.details.lifetime.trades).toBe(1);
-    expect(response.body.details.links.dexscreener).toBe(`https://dexscreener.com/base/${TOKEN}`);
+    // Market links are keyed by the pool, never the token: a token-keyed page lists the pools
+    // strangers opened against USDC or ETH beside ours.
+    const poolId = `0x${'cd'.repeat(32)}`;
+    expect(response.body.details.links.dexscreener).toBe(`https://dexscreener.com/base/${poolId}`);
+    expect(response.body.details.links.geckoterminal).toBe(`https://www.geckoterminal.com/base/pools/${poolId}`);
+    expect(response.body.details.links.uniswap).toBe(`https://app.uniswap.org/explore/pools/base/${poolId}`);
+    expect(response.body.details.links.basescan).toBe(`https://basescan.org/token/${TOKEN}`);
     const market = response.body.market;
     expect(market.symbol).toBe('TEST');
     expect(market.stock.symbol).toBe('NVDAc');

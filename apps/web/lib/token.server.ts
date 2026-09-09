@@ -13,13 +13,17 @@ import type { TokenDetails, TokenFees, TokenLifetime, TokenPool } from './types'
 
 const stateViewAbi = parseAbi(['function getSlot0(bytes32 poolId) view returns (uint160 sqrtPriceX96, int24 tick, uint24 protocolFee, uint24 lpFee)']);
 
-/** Where else a trader may want to look at this token. All public explorers keyed by the token address. */
-export function externalLinks(token: string): TokenDetails['links'] {
+/**
+ * Where else a trader may want to look at this token. Every market link is keyed by the pool id,
+ * not the token: anyone can open a second Uniswap pool against USDC or ETH once the token exists,
+ * and a token-keyed page lists those beside ours. Only Basescan stays token-keyed.
+ */
+export function externalLinks(token: string, poolId: string): TokenDetails['links'] {
   return {
     basescan: `https://basescan.org/token/${token}`,
-    dexscreener: `https://dexscreener.com/base/${token}`,
-    geckoterminal: `https://www.geckoterminal.com/base/tokens/${token}`,
-    uniswap: `https://app.uniswap.org/explore/tokens/base/${token}`,
+    dexscreener: `https://dexscreener.com/base/${poolId}`,
+    geckoterminal: `https://www.geckoterminal.com/base/pools/${poolId}`,
+    uniswap: `https://app.uniswap.org/explore/pools/base/${poolId}`,
   };
 }
 
@@ -124,5 +128,5 @@ export async function readTokenDetails(db: Db, market: MarketView): Promise<Omit
     };
   }
 
-  return { fees, lifetime, pool, links: externalLinks(market.token) };
+  return { fees, lifetime, pool, links: externalLinks(market.token, market.poolId) };
 }
