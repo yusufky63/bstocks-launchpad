@@ -55,9 +55,10 @@ export function HomeView({ initialMarkets, initialStats }: { initialMarkets?: Ma
             </div>
             <dl className="mt-7 grid grid-cols-2 sm:grid-cols-4 gap-px bg-line border border-line rounded-[8px] overflow-hidden max-w-[640px]">
               {[
+                // The front door states the scale reached so far; "Top movers" below carries the day.
                 { label: 'Tokens launched', value: String(stats?.launches ?? rows.length) },
-                { label: 'Volume · 24h', value: stats?.volume24hUsd ? formatUsd(stats.volume24hUsd, { compact: true }) : '—' },
-                { label: 'Fees to creators', value: stats?.creatorFeesUsd ? formatUsd(stats.creatorFeesUsd, { compact: true }) : '—' },
+                { label: 'Volume · all', value: stats?.volumeUsd ? formatUsd(stats.volumeUsd, { compact: true }) : '—' },
+                { label: 'Trades · all', value: stats?.swaps ? formatNumber(stats.swaps, 0) : '—' },
                 { label: 'Traders', value: stats ? formatNumber(stats.traders, 0) : '—' },
               ].map((c) => (
                 <div key={c.label} className="bg-canvas/85 px-3 py-2.5">

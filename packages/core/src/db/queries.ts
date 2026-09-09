@@ -107,6 +107,8 @@ export type MarketRow = LaunchRow & {
   price_24h_ago: string | null;
   volume_24h_stock_raw: string;
   trades_24h: number;
+  volume_all_stock_raw: string;
+  trades_all: number;
   holder_count: number;
 };
 
@@ -636,6 +638,8 @@ const MARKET_SELECT = `
     ago.price_token_in_stock AS price_24h_ago,
     coalesce(vol.volume_stock_raw, 0)::numeric(40,0) AS volume_24h_stock_raw,
     coalesce(vol.trades, 0)::int AS trades_24h,
+    coalesce(vol.volume_all_stock_raw, 0)::numeric(40,0) AS volume_all_stock_raw,
+    coalesce(vol.trades_all, 0)::int AS trades_all,
     coalesce(h.holder_count, 0)::int AS holder_count
   FROM launches l
   JOIN stocks s ON s.address = l.stock
@@ -653,8 +657,12 @@ const MARKET_SELECT = `
     ORDER BY block_time DESC, log_index DESC LIMIT 1
   ) ago ON true
   LEFT JOIN LATERAL (
-    SELECT sum(amount_stock_raw) AS volume_stock_raw, count(*) AS trades FROM swaps
-    WHERE swaps.token = l.token AND block_time > now() - interval '24 hours'
+    -- Lifetime and 24h come from one pass over the token's swaps rather than two laterals.
+    SELECT sum(amount_stock_raw) FILTER (WHERE block_time > now() - interval '24 hours') AS volume_stock_raw,
+           count(*) FILTER (WHERE block_time > now() - interval '24 hours') AS trades,
+           sum(amount_stock_raw) AS volume_all_stock_raw,
+           count(*) AS trades_all
+    FROM swaps WHERE swaps.token = l.token
   ) vol ON true
   LEFT JOIN LATERAL (
     SELECT count(*) AS holder_count FROM balances

@@ -31,6 +31,9 @@ export type MarketView = {
   volume24hStock: number;
   volume24hUsd: number | null;
   trades24h: number;
+  /** Since launch, not the last day. */
+  volumeUsd: number | null;
+  trades: number;
   holders: number;
   stockUsd: number | null;
   stockFeedUpdatedAt: string | null;
@@ -57,6 +60,7 @@ export function toMarketView(row: MarketRow, now = new Date()): MarketView {
   const ago = row.price_24h_ago === null ? null : Number(row.price_24h_ago);
   const stockUnit = 10 ** Number(row.stock_decimals);
   const volume24hStock = Number(row.volume_24h_stock_raw) / stockUnit;
+  const volumeStock = Number(row.volume_all_stock_raw) / stockUnit;
   return {
     token: row.token,
     name: row.name,
@@ -89,6 +93,8 @@ export function toMarketView(row: MarketRow, now = new Date()): MarketView {
     volume24hStock,
     volume24hUsd: stockUsd === null ? null : volume24hStock * stockUsd,
     trades24h: Number(row.trades_24h),
+    volumeUsd: stockUsd === null ? null : volumeStock * stockUsd,
+    trades: Number(row.trades_all),
     holders: Number(row.holder_count),
     stockUsd,
     stockFeedUpdatedAt: row.feed_updated_at ? new Date(row.feed_updated_at).toISOString() : null,

@@ -319,6 +319,8 @@ describe('market view helpers', () => {
       last_trade_at: null,
       price_24h_ago: null,
       volume_24h_stock_raw: '0',
+      volume_all_stock_raw: '0',
+      trades_all: 0,
       trades_24h: 0,
       holder_count: 0,
     });

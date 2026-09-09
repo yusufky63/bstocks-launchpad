@@ -272,19 +272,27 @@ function MarketRow({ market, isNew }: { market: MarketView; isNew: boolean }) {
 }
 
 /** Totals across the listed markets, computed from the rows the page already holds. */
+/**
+ * Totals for whatever the board is currently showing, so they still describe the set after a stock
+ * filter. Each figure is given for the last day and since launch: the day says whether the board is
+ * busy now, and the lifetime figure is what says how much has happened here at all.
+ */
 export function MarketStats({ rows }: { rows: MarketView[] }) {
-  const volume = rows.reduce((sum, m) => sum + (m.volume24hUsd ?? 0), 0);
-  const trades = rows.reduce((sum, m) => sum + m.trades24h, 0);
-  const priced = rows.filter((m) => m.change24hPercent !== null);
-  const up = priced.filter((m) => (m.change24hPercent ?? 0) > 0).length;
-  const fdv = rows.reduce((sum, m) => sum + (m.fdvUsd ?? 0), 0);
+  const volume24h = rows.reduce((sum, m) => sum + (m.volume24hUsd ?? 0), 0);
+  const trades24h = rows.reduce((sum, m) => sum + m.trades24h, 0);
+  const volume = rows.reduce((sum, m) => sum + (m.volumeUsd ?? 0), 0);
+  const trades = rows.reduce((sum, m) => sum + m.trades, 0);
+  const holders = rows.reduce((sum, m) => sum + m.holders, 0);
   return (
     <StatStrip
+      columns="grid-cols-2 md:grid-cols-3 lg:grid-cols-6"
       cells={[
         { label: 'Tokens', value: String(rows.length) },
-        { label: 'Volume · 24h', value: volume > 0 ? formatUsd(volume, { compact: true }) : '—' },
-        { label: 'Trades · 24h', value: trades > 0 ? formatNumber(trades, 0) : '—' },
-        { label: 'Up today', value: priced.length ? `${up} / ${priced.length}` : fdv > 0 ? formatUsd(fdv, { compact: true }) : '—' },
+        { label: 'Volume · 24h', value: volume24h > 0 ? formatUsd(volume24h, { compact: true }) : '—' },
+        { label: 'Volume · all', value: volume > 0 ? formatUsd(volume, { compact: true }) : '—' },
+        { label: 'Trades · 24h', value: trades24h > 0 ? formatNumber(trades24h, 0) : '—' },
+        { label: 'Trades · all', value: trades > 0 ? formatNumber(trades, 0) : '—' },
+        { label: 'Holders', value: holders > 0 ? formatNumber(holders, 0) : '—' },
       ]}
     />
   );
