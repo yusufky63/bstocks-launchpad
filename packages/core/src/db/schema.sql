@@ -217,3 +217,34 @@ CREATE TABLE IF NOT EXISTS token_profiles (
   issued_at    timestamptz NOT NULL,          -- timestamp inside the signed message (replay guard)
   updated_at   timestamptz NOT NULL DEFAULT now()
 );
+
+-- Version 6: the alert channel. The indexer writes a row here inside the same transaction that
+-- commits the swap or launch it describes, so an announcement is exactly as durable as the fact it
+-- announces: a rollback leaves none, a commit cannot lose one.
+--
+-- No FK to launches(token). A reorg deletes launches wholesale, and these rows are cleaned up
+-- explicitly by rollbackFrom rather than cascaded, so that a row already sent stays as a record of
+-- what the channel actually said.
+CREATE TABLE IF NOT EXISTS alert_outbox (
+  id           bigserial PRIMARY KEY,
+  kind         text NOT NULL,                 -- launch | trade | milestone | ath
+  token        text NOT NULL,
+  -- Everything needed to render, snapshotted at commit. The dispatcher never re-reads: a post has
+  -- to say what was true when it happened, not what is true when it is finally sent.
+  payload      jsonb NOT NULL,
+  block_number bigint NOT NULL,
+  created_at   timestamptz NOT NULL DEFAULT now(),
+  sent_at      timestamptz
+);
+
+-- What has already been announced. Milestones are crossed once and a restart must not repeat them.
+CREATE TABLE IF NOT EXISTS alert_marks (
+  token     text NOT NULL,
+  kind      text NOT NULL,                    -- mcap | ath | digest
+  value     numeric(60,30) NOT NULL,          -- the level reached, so a later crossing can compare
+  marked_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (token, kind)
+);
+
+CREATE INDEX IF NOT EXISTS alert_outbox_pending_idx ON alert_outbox (id) WHERE sent_at IS NULL;
+CREATE INDEX IF NOT EXISTS alert_outbox_block_idx ON alert_outbox (block_number);

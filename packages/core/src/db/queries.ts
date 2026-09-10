@@ -681,10 +681,122 @@ export async function rollbackFrom(db: Db, fromBlock: bigint) {
   await db.query('DELETE FROM candles WHERE token IN (SELECT token FROM launches WHERE block_number >= $1)', [from]);
   await db.query('DELETE FROM launches WHERE block_number >= $1', [from]);
   await db.query('DELETE FROM blocks WHERE number >= $1', [from]);
+  // Announcements for blocks that no longer exist. Only the unsent ones: a row already posted is
+  // the record of what the channel actually said, and deleting it would not unsay it.
+  await db.query('DELETE FROM alert_outbox WHERE block_number >= $1 AND sent_at IS NULL', [from]);
   for (const c of affected) {
     await db.query('DELETE FROM candles WHERE token = $1 AND bucket = $2', [c.token, c.bucket]);
     await rebuildCandle(db, c.token, c.bucket);
   }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Alert outbox
+//
+// The indexer enqueues here inside the same transaction that commits the swap or launch being
+// announced, so an alert is exactly as durable as the fact behind it: a rollback leaves none, a
+// commit cannot lose one. The dispatcher is a separate process and may be seconds or minutes
+// behind; that is why the payload is snapshotted at enqueue time rather than re-read at send time.
+// ---------------------------------------------------------------------------------------------
+
+export type AlertKind = 'launch' | 'trade' | 'milestone' | 'ath';
+
+export type AlertInsert = {
+  kind: AlertKind;
+  token: string;
+  payload: unknown;
+  blockNumber: bigint;
+};
+
+export type AlertRow = {
+  id: string;
+  kind: AlertKind;
+  token: string;
+  payload: unknown;
+  block_number: string;
+  created_at: Date;
+  sent_at: Date | null;
+};
+
+/** jsonb comes back parsed from postgres.js and PGlite alike, but a driver that hands back the
+ *  raw text should not become a crash in the dispatcher. */
+function parsePayload(value: unknown): unknown {
+  if (typeof value !== 'string') return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+export async function enqueueAlerts(db: Db, alerts: readonly AlertInsert[]) {
+  for (const chunk of chunked(alerts, 4)) {
+    await db.query(
+      `INSERT INTO alert_outbox (kind, token, payload, block_number)
+       VALUES ${placeholders(chunk.length, 4, ['text', 'text', 'jsonb', 'bigint'])}`,
+      chunk.flatMap((a) => [a.kind, a.token.toLowerCase(), JSON.stringify(a.payload ?? null), a.blockNumber.toString()]),
+    );
+  }
+}
+
+/** The oldest unsent alerts, in the order they happened. */
+export async function listPendingAlerts(db: Db, limit = 20): Promise<AlertRow[]> {
+  const capped = Math.min(Math.max(limit, 1), 500);
+  const rows = await db.query<AlertRow>(
+    `SELECT id, kind, token, payload, block_number, created_at, sent_at
+     FROM alert_outbox WHERE sent_at IS NULL ORDER BY id LIMIT ${capped}`,
+  );
+  return rows.map((row) => ({ ...row, payload: parsePayload(row.payload) }));
+}
+
+export async function countPendingAlerts(db: Db): Promise<number> {
+  const rows = await db.query<{ count: string }>('SELECT count(*)::text AS count FROM alert_outbox WHERE sent_at IS NULL');
+  return Number(rows[0]?.count ?? 0);
+}
+
+/** Marks rows sent. Called only after Telegram acknowledges, so a crash mid-send redelivers
+ *  rather than dropping. */
+export async function markAlertsSent(db: Db, ids: readonly string[]) {
+  if (ids.length === 0) return;
+  await db.query('UPDATE alert_outbox SET sent_at = now() WHERE id = ANY($1::bigint[])', [ids]);
+}
+
+/** Drops sent rows older than the given age, so the table does not grow without bound. */
+export async function pruneSentAlerts(db: Db, olderThanDays = 30): Promise<number> {
+  const rows = await db.query<{ id: string }>(
+    `DELETE FROM alert_outbox WHERE sent_at IS NOT NULL AND sent_at < now() - ($1 || ' days')::interval RETURNING id`,
+    [String(Math.max(1, Math.floor(olderThanDays)))],
+  );
+  return rows.length;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Alert marks
+//
+// A milestone is crossed once. Without a record of what has been announced, a restart would
+// re-announce every level every token has ever passed.
+// ---------------------------------------------------------------------------------------------
+
+export type AlertMarkRow = { token: string; kind: string; value: string; marked_at: Date };
+
+export async function readAlertMark(db: Db, token: string, kind: string): Promise<AlertMarkRow | null> {
+  const rows = await db.query<AlertMarkRow>(
+    'SELECT token, kind, value, marked_at FROM alert_marks WHERE token = $1 AND kind = $2',
+    [token.toLowerCase(), kind],
+  );
+  return rows[0] ?? null;
+}
+
+export async function readAlertMarks(db: Db, kind: string): Promise<AlertMarkRow[]> {
+  return db.query<AlertMarkRow>('SELECT token, kind, value, marked_at FROM alert_marks WHERE kind = $1', [kind]);
+}
+
+export async function setAlertMark(db: Db, token: string, kind: string, value: string) {
+  await db.query(
+    `INSERT INTO alert_marks (token, kind, value, marked_at) VALUES ($1, $2, $3, now())
+     ON CONFLICT (token, kind) DO UPDATE SET value = EXCLUDED.value, marked_at = now()`,
+    [token.toLowerCase(), kind, value],
+  );
 }
 
 // ---------------------------------------------------------------------------------------------

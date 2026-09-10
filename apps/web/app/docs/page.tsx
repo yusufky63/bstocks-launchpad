@@ -27,6 +27,7 @@ const TOC = [
   ['indexer', 'Indexer'],
   ['profiles', 'Token profiles'],
   ['api', 'API'],
+  ['alerts', 'Alerts'],
   ['stocks', 'Quote stocks'],
   ['security', 'Security model'],
 ] as const;
@@ -149,7 +150,24 @@ export default function DocsPage() {
             <KeyValue k="GET /api/health" v="database, contracts, indexer lag, chain head" mono={false} />
           </Section>
 
-          <Section id="stocks" index="09" title="Quote stocks">
+          <Section id="alerts" index="09" title="Alerts">
+
+            <p>
+
+              A Telegram channel posts every launch, every large trade and every market cap milestone. It is fed by the indexer rather than by polling the API: a row is written into an outbox table inside the same database transaction that commits the swap it describes, so an announcement is exactly as durable as the fact behind it. A reorg deletes the unsent rows for the blocks it rolled back, so the channel cannot announce a trade that did not survive.
+
+            </p>
+
+            <p>
+
+              A trade qualifies by clearing an absolute dollar floor <strong>or</strong> a share of that token&apos;s own 24-hour volume, because one threshold cannot serve a token doing $200 a day and one doing $20,000. Individual buys and sells are deliberately not posted: nobody can filter a shared channel, so one busy token would bury every other. Milestones are recorded only after the post is actually delivered, so a failed send retries rather than silently skipping a level.
+
+            </p>
+
+          </Section>
+
+
+          <Section id="stocks" index="10" title="Quote stocks">
             <p>Coinbase tokenized stocks on Base, registered in the factory with their Chainlink total-return feeds (8 decimals, 24/5). Icons come from each token&apos;s onchain metadata.</p>
             <div className="overflow-x-auto -mx-4 md:-mx-5">
               <table className="w-full text-[13px] min-w-[640px]">
@@ -179,7 +197,7 @@ export default function DocsPage() {
             </div>
           </Section>
 
-          <Section id="security" index="10" title="Security model">
+          <Section id="security" index="11" title="Security model">
             <ul className="list-disc pl-5 flex flex-col gap-1">
               <li><strong>No custody.</strong> The site holds no keys and no funds. Fees live in the PoolManager as claims owned by the hook and booked per account.</li>
               <li><strong>No admin over tokens.</strong> Launched tokens have the zero address as admin; the factory cannot mint, pause or withdraw liquidity.</li>

@@ -16,6 +16,8 @@ const INDEXES = [
   'balances_holder_idx',
   'fee_events_token_idx',
   'fee_claims_account_idx',
+  'alert_outbox_pending_idx',
+  'alert_outbox_block_idx',
 ];
 
 async function indexNames(db: Awaited<ReturnType<typeof createEmbeddedDb>>): Promise<Set<string>> {

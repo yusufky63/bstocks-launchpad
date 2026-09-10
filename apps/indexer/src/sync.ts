@@ -18,6 +18,7 @@ import {
 import {
   addSwapFees,
   applyBalanceDeltas,
+  enqueueAlerts,
   insertFeeClaims,
   insertFeeEvents,
   insertLaunches,
@@ -29,6 +30,7 @@ import {
   rollbackFrom,
   upsertBlocks,
   writeCursor,
+  type AlertInsert,
   type BalanceDelta,
   type Db,
   type FeeClaimInsert,
@@ -76,6 +78,79 @@ async function loadPools(db: Db): Promise<Map<string, PoolInfo>> {
     });
   }
   return pools;
+}
+
+/**
+ * Queues what happened for the alert channel.
+ *
+ * Deliberately unfiltered: every launch and every swap goes in, and the alerts service decides
+ * what is worth posting. Policy — thresholds, which kinds are announced at all — changes far more
+ * often than this loop should, and this loop is the one process that must never break.
+ *
+ * The stock's USD price is read here rather than at send time because a post has to say what a
+ * trade was worth when it happened, not when the dispatcher got round to it.
+ */
+async function queueAlerts(
+  tx: Db,
+  launches: readonly LaunchInsert[],
+  swaps: readonly SwapInsert[],
+  pools: Map<string, PoolInfo>,
+): Promise<void> {
+  if (launches.length === 0 && swaps.length === 0) return;
+
+  const stocks = [...new Set([...launches.map((l) => l.stock), ...swaps.map((s) => pools.get(s.poolId.toLowerCase())?.stock ?? '')])]
+    .filter(Boolean)
+    .map((a) => a.toLowerCase());
+  const quotes = new Map<string, string>();
+  if (stocks.length > 0) {
+    const rows = await tx.query<{ stock: string; price_usd8: string }>(
+      'SELECT stock, price_usd8 FROM stock_quotes WHERE stock = ANY($1::text[])',
+      [stocks],
+    );
+    for (const row of rows) quotes.set(row.stock.toLowerCase(), row.price_usd8);
+  }
+
+  const alerts: AlertInsert[] = [];
+  for (const l of launches) {
+    alerts.push({
+      kind: 'launch',
+      token: l.token,
+      blockNumber: l.blockNumber,
+      payload: {
+        name: l.name,
+        symbol: l.symbol,
+        creator: l.creator.toLowerCase(),
+        stock: l.stock.toLowerCase(),
+        stockUsd8: l.stockUsd8.toString(),
+        txHash: l.txHash,
+        launchedAt: l.launchedAt.toISOString(),
+      },
+    });
+  }
+  for (const s of swaps) {
+    const pool = pools.get(s.poolId.toLowerCase());
+    if (!pool) continue;
+    const stock = pool.stock.toLowerCase();
+    alerts.push({
+      kind: 'trade',
+      token: s.token,
+      blockNumber: s.blockNumber,
+      payload: {
+        side: s.side,
+        amountTokenRaw: s.amountTokenRaw.toString(),
+        amountStockRaw: s.amountStockRaw.toString(),
+        priceTokenInStock: s.priceTokenInStock,
+        trader: s.trader?.toLowerCase() ?? null,
+        txHash: s.txHash,
+        logIndex: s.logIndex,
+        blockTime: s.blockTime.toISOString(),
+        stock,
+        stockDecimals: pool.stockDecimals,
+        stockUsd8: quotes.get(stock) ?? null,
+      },
+    });
+  }
+  await enqueueAlerts(tx, alerts);
 }
 
 /** How many RPC reads may be outstanding at once; the transport batches whatever overlaps. */
@@ -365,6 +440,9 @@ export async function syncOnce(options: SyncOptions): Promise<SyncResult> {
     await applyBalanceDeltas(tx, deltas);
 
     await rebuildCandles(tx, candleBuckets);
+    // Inside the same transaction as the rows it describes: a rollback leaves no announcement of
+    // something that never happened, and a commit cannot lose one.
+    await queueAlerts(tx, launchRows, swapRows, pools);
     await writeCursor(tx, to + 1n, blocks.get(to)!.hash);
   });
   const launches = launchRows.length;

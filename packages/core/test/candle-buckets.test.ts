@@ -77,7 +77,7 @@ describe('listCandles bucketing', () => {
   });
 
   afterAll(async () => {
-    await db.end?.();
+    await db.close();
   });
 
   it('returns one row per minute when nothing is asked for', async () => {

@@ -33,6 +33,7 @@ const DESKTOP_NAV = [
 
 const FOOTER_LINKS = [
   ['/stats', 'Stats', false],
+  ['/alerts', 'Alerts', false],
   ['/how-it-works', 'How it works', false],
   ['/docs', 'Docs', false],
   ['https://basestocks.finance', 'BaseStocks', true],
