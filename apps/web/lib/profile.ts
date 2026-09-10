@@ -37,12 +37,42 @@ export type ProfileMessage = {
 export const EMPTY_IMAGE_HASH = `0x${'0'.repeat(64)}` as Hex;
 export const PROFILE_MAX_AGE_SECONDS = 15 * 60;
 
+/**
+ * A creator's website, restricted to the two schemes a link can safely be.
+ *
+ * `z.url()` is not that restriction: on zod 4.5.4 it accepts `javascript:`, `data:` and `vbscript:`
+ * because they are well-formed URLs. Every one of these fields is chosen by whoever paid the launch
+ * fee, and the token page renders this one as an anchor, so "well-formed" is the wrong test. The
+ * handles beside it were already normalised to canonical x.com and t.me URLs; this closes the one
+ * field that was still whatever the creator typed.
+ */
+export const websiteSchema = z
+  .string()
+  .trim()
+  .max(200)
+  .refine((v) => v === '' || /^https?:\/\/\S+$/iu.test(v), 'Use a link starting with http:// or https://')
+  .optional()
+  .or(z.literal(''));
+
 export const profileFieldsSchema = z.object({
   description: z.string().trim().max(1_000).default(''),
-  website: z.string().trim().url().max(200).optional().or(z.literal('')),
+  website: websiteSchema,
   twitter: z.string().trim().max(60).optional().or(z.literal('')),
   telegram: z.string().trim().max(60).optional().or(z.literal('')),
 });
+
+/**
+ * The last line of defence, at the point of rendering.
+ *
+ * Rows written before the rule above existed still hold whatever they hold, and a future writer
+ * that forgets the schema should not be able to put a scheme on the page. Anything that is not
+ * http(s) becomes nothing rather than a link.
+ */
+export function safeExternalUrl(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  return /^https?:\/\/\S+$/iu.test(trimmed) ? trimmed : null;
+}
 
 /** Accepts @handle, handle, or a t.me / telegram.me link; returns the canonical t.me URL or null. */
 export function normalizeTelegram(value: string | null | undefined): string | null {

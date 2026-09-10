@@ -1,5 +1,6 @@
 'use client';
 
+import { safeExternalUrl } from '@/lib/profile';
 import Link from 'next/link';
 import { useMemo, useState, type ReactNode } from 'react';
 
@@ -263,9 +264,10 @@ export function TokenRecords({ market, links, fees, trades }: { market: MarketVi
               ))}
             </div>
           )}
-          <KeyValue k="Website" v={market.website ? <a href={market.website} target="_blank" rel="noreferrer noopener" className="text-primary">{market.website}</a> : '—'} mono={false} />
-          <KeyValue k="X" v={market.twitter ? <a href={market.twitter} target="_blank" rel="noreferrer noopener" className="text-primary">{market.twitter}</a> : '—'} mono={false} />
-          <KeyValue k="Telegram" v={market.telegram ? <a href={market.telegram} target="_blank" rel="noreferrer noopener" className="text-primary">{market.telegram}</a> : '—'} mono={false} />
+          {/* Creator-supplied, so the scheme is checked here as well as on the way in. */}
+          <KeyValue k="Website" v={<ExternalValue url={market.website} />} mono={false} />
+          <KeyValue k="X" v={<ExternalValue url={market.twitter} />} mono={false} />
+          <KeyValue k="Telegram" v={<ExternalValue url={market.telegram} />} mono={false} />
           <KeyValue k="Profile" v={market.profileUpdatedAt ? `Updated by the creator with a signed message · ${formatDateTime(market.profileUpdatedAt)}` : 'As written in the launch metadata'} mono={false} />
           <KeyValue k="Token" v={<AddressLabel address={market.token} explorer kind="token" chars={8} />} />
           <KeyValue k="Creator" v={<Link href={`/wallet/${market.creator}`} className="text-primary font-mono">{shortAddress(market.creator, 8)}</Link>} />
@@ -280,5 +282,16 @@ export function TokenRecords({ market, links, fees, trades }: { market: MarketVi
         </div>
       )}
     </>
+  );
+}
+
+/** A creator-supplied link, or nothing. Never an anchor to a scheme this page did not choose. */
+function ExternalValue({ url }: { url: string | null }) {
+  const safe = safeExternalUrl(url);
+  if (!safe) return <>{'\u2014'}</>;
+  return (
+    <a href={safe} target="_blank" rel="noreferrer noopener" className="text-primary">
+      {safe}
+    </a>
   );
 }

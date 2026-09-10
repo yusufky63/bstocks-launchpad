@@ -4,6 +4,7 @@ import { error, json } from '@/lib/api.server';
 import { callerKey, rateLimit } from '@/lib/rate-limit.server';
 import { PinError, pinMetadata } from '@/lib/pinata.server';
 import { normalizeTwitter } from '@/lib/twitter';
+import { websiteSchema } from '@/lib/profile';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,7 +12,7 @@ const fieldsSchema = z.object({
   name: z.string().trim().min(1).max(64),
   symbol: z.string().trim().regex(/^[A-Z0-9]{1,16}$/u),
   description: z.string().trim().max(1_000).default(''),
-  website: z.string().trim().url().max(200).optional().or(z.literal('')),
+  website: websiteSchema,
   twitter: z.string().trim().max(60).optional().or(z.literal('')),
 });
 
