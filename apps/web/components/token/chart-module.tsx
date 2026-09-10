@@ -9,7 +9,7 @@ import { Chip, Skeleton, cx } from '@/components/ui/primitives';
 import { useCandles } from '@/lib/queries';
 import type { CandleView, SwapView } from '@/lib/types';
 
-type Timeframe = 1 | 5 | 15 | 60 | 240;
+type Timeframe = 1 | 5 | 15 | 60 | 240 | 1440;
 type ChartStyle = 'line' | 'candles';
 type ChartSource = 'native' | 'dexscreener';
 const SOURCES: Array<{ value: ChartSource; label: string }> = [
@@ -27,27 +27,8 @@ const TIMEFRAMES: Array<{ value: Timeframe; label: string }> = [
   { value: 15, label: '15m' },
   { value: 60, label: '1h' },
   { value: 240, label: '4h' },
+  { value: 1440, label: '1d' },
 ];
-
-function aggregate(candles: CandleView[], minutes: Timeframe): CandleView[] {
-  if (minutes === 1) return candles;
-  const size = minutes * 60;
-  const buckets = new Map<number, CandleView>();
-  for (const c of candles) {
-    const key = Math.floor(c.time / size) * size;
-    const existing = buckets.get(key);
-    if (!existing) buckets.set(key, { ...c, time: key });
-    else {
-      existing.high = Math.max(existing.high, c.high);
-      existing.low = Math.min(existing.low, c.low);
-      existing.close = c.close;
-      existing.volumeStock += c.volumeStock;
-      existing.volumeToken += c.volumeToken;
-      existing.trades += c.trades;
-    }
-  }
-  return [...buckets.values()].sort((a, b) => a.time - b.time);
-}
 
 function cssVar(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -60,7 +41,7 @@ export function ChartModule({ token, poolId, stockSymbol, creatorSwaps = [] }: {
   const [tf, setTf] = useState<Timeframe>(5);
   const [unit, setUnit] = useState<'usd' | 'stock'>('usd');
   const [style, setStyle] = useState<ChartStyle>('candles');
-  const { data, isLoading, isError } = useCandles(token);
+  const { data, isLoading, isError } = useCandles(token, tf);
   const stockUsd = data?.quote.usd ?? null;
   const effectiveUnit = unit === 'usd' && stockUsd ? 'usd' : 'stock';
 
@@ -77,7 +58,7 @@ export function ChartModule({ token, poolId, stockSymbol, creatorSwaps = [] }: {
             return { ...c, open: c.open * at, high: c.high * at, low: c.low * at, close: c.close * at, volumeStock: c.volumeStock * at };
           })
         : raw;
-    return aggregate(priced, tf).map((c) => ({
+    return priced.map((c) => ({
       time: c.time,
       open: c.open,
       high: c.high,

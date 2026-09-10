@@ -130,10 +130,18 @@ export function useHolders(address: string, enabled = true, limit = 100) {
   });
 }
 
-export function useCandles(address: string) {
+/**
+ * Candles at the width the chart is showing.
+ *
+ * The bucket is part of the request rather than something the browser does afterwards: the read is
+ * capped at 2000 rows, and spending that cap on minutes only to add them together left the
+ * four-hour view with eight candles and made a daily view pointless. Asked for daily, 2000 rows
+ * reach back further than the launchpad has existed.
+ */
+export function useCandles(address: string, bucketMinutes = 1) {
   return useQuery<CandlesResponse, Error>({
-    queryKey: qk.candles(address),
-    queryFn: () => apiGet<CandlesResponse>(`/api/tokens/${address}/candles?limit=2000`),
+    queryKey: [...qk.candles(address), bucketMinutes],
+    queryFn: () => apiGet<CandlesResponse>(`/api/tokens/${address}/candles?limit=2000&bucket=${bucketMinutes}`),
     refetchInterval: 20_000,
   });
 }

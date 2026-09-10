@@ -849,10 +849,29 @@ export async function listSwaps(
   );
 }
 
+/**
+ * Candles, optionally grouped into wider buckets before they leave the database.
+ *
+ * The table stores one row per minute and the read is capped at 2000 rows, which is a little over
+ * thirty-three hours. Grouping those in the browser is why the four-hour view only ever had eight
+ * candles on it and why a daily view was not worth offering: the cap was being spent on minutes
+ * that were about to be added together anyway. Grouping here spends it on the bucket the caller
+ * actually asked for, so 2000 daily candles reach back further than the launchpad has existed.
+ *
+ * `bucketMinutes` is a whitelist rather than a number from the caller: it goes into the SQL as a
+ * width, and the set is the same one the chart offers.
+ */
+const CANDLE_BUCKETS = [1, 5, 15, 60, 240, 1_440] as const;
+export type CandleBucketMinutes = (typeof CANDLE_BUCKETS)[number];
+
+export function isCandleBucket(value: number): value is CandleBucketMinutes {
+  return (CANDLE_BUCKETS as readonly number[]).includes(value);
+}
+
 export async function listCandles(
   db: Db,
   token: string,
-  options: { from?: Date; to?: Date; limit?: number } = {},
+  options: { from?: Date; to?: Date; limit?: number; bucketMinutes?: CandleBucketMinutes } = {},
 ): Promise<CandleRow[]> {
   const params: unknown[] = [token.toLowerCase()];
   const clauses = ['token = $1'];
@@ -864,6 +883,35 @@ export async function listCandles(
     params.push(options.to);
     clauses.push(`bucket <= $${params.length}`);
   }
+
+  const width = options.bucketMinutes && isCandleBucket(options.bucketMinutes) ? options.bucketMinutes : 1;
+  if (width > 1) {
+    params.push(Math.min(Math.max(options.limit ?? 500, 1), 2000));
+    const seconds = width * 60;
+    // open is the first close-ordered row of the bucket and close the last, which is what makes
+    // this a candle rather than a summary. `DISTINCT ON` would need the same ordering twice.
+    const rows = await db.query<CandleRow>(
+      `SELECT * FROM (
+         SELECT token,
+                to_timestamp(floor(extract(epoch FROM bucket) / ${seconds}) * ${seconds}) AS bucket,
+                (array_agg(open ORDER BY bucket ASC))[1]  AS open,
+                max(high)                                  AS high,
+                min(low)                                   AS low,
+                (array_agg(close ORDER BY bucket DESC))[1] AS close,
+                sum(volume_stock_raw)                      AS volume_stock_raw,
+                sum(volume_token_raw)                      AS volume_token_raw,
+                sum(trade_count)::int                      AS trade_count
+           FROM candles
+          WHERE ${clauses.join(' AND ')}
+          GROUP BY token, 2
+          ORDER BY 2 DESC
+          LIMIT $${params.length}
+       ) c ORDER BY bucket ASC`,
+      params,
+    );
+    return rows;
+  }
+
   params.push(Math.min(Math.max(options.limit ?? 500, 1), 2000));
   const rows = await db.query<CandleRow>(
     `SELECT * FROM (SELECT * FROM candles WHERE ${clauses.join(' AND ')} ORDER BY bucket DESC LIMIT $${params.length}) c ORDER BY bucket ASC`,

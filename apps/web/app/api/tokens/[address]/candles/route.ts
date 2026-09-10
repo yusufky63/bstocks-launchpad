@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { listCandles, listStockQuoteHistory, readMarket } from '@stockpair/core/db';
+import { isCandleBucket, listCandles, listStockQuoteHistory, readMarket } from '@stockpair/core/db';
 
 import { error, json, parseAddressParam } from '@/lib/api.server';
 import { getDb } from '@/lib/db.server';
@@ -13,6 +13,8 @@ const querySchema = z.object({
   from: z.coerce.date().optional(),
   to: z.coerce.date().optional(),
   limit: z.coerce.number().int().min(1).max(2_000).default(500),
+  /** Bucket width in minutes. One of the widths the chart offers; anything else is refused. */
+  bucket: z.coerce.number().int().refine(isCandleBucket, 'unsupported bucket').default(1),
 });
 
 export async function GET(request: Request, { params }: Context): Promise<Response> {
@@ -25,7 +27,7 @@ export async function GET(request: Request, { params }: Context): Promise<Respon
   const db = await getDb();
   const market = await readMarket(db, token);
   if (!market) return error(404, 'TOKEN_NOT_FOUND', 'No token was launched at this address.');
-  const rows = await listCandles(db, token, parsed.data);
+  const rows = await listCandles(db, token, { ...parsed.data, bucketMinutes: parsed.data.bucket });
   const stockUnit = 10 ** Number(market.stock_decimals);
   const latestUsd = market.stock_usd8 === null ? null : Number(market.stock_usd8) / 1e8;
 
