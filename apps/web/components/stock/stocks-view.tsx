@@ -59,11 +59,11 @@ export function StocksView({ initialStocks }: { initialStocks?: StocksResponse }
                   <span className="display num text-[18px] leading-none">
                     <AnimatedNumber value={s.priceUsd} format={(v) => formatUsd(v)} />
                   </span>
-                  {s.enabled ? (
-                    <Badge tone={s.feedStatus === 'live' ? 'positive' : 'neutral'} title={s.feedUpdatedAt ? `Chainlink updated ${new Date(s.feedUpdatedAt).toUTCString()}` : undefined}>
-                      {s.feedStatus === 'live' ? 'feed live' : s.feedStatus === 'holding' ? 'last close' : 'no reading'}
-                    </Badge>
-                  ) : (
+                  {/* A live or held feed needs no badge: the "feed 2h ago" line below already says
+                      when it last moved, and a green pill on every row is noise. No reading at all
+                      is different — the price above has nothing behind it, so that one stays. */}
+                  {s.enabled && s.feedStatus === 'unknown' && <Badge tone="neutral">no reading</Badge>}
+                  {!s.enabled && (
                     <Badge tone="warning" title="Coinbase has not minted this stock on Base yet; launches against it are closed until it is issued">
                       not issued yet
                     </Badge>
