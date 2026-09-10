@@ -3,7 +3,7 @@
 import { useMutation } from '@tanstack/react-query';
 import { ArrowUpRight, ImagePlus } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useMemo, useState, useSyncExternalStore } from 'react';
 import type { Address, Hex } from 'viem';
 import { useAccount, usePublicClient, useReadContracts, useWriteContract } from 'wagmi';
 import { base } from 'wagmi/chains';
@@ -31,6 +31,34 @@ function randomSalt(): Hex {
   return `0x${Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')}`;
 }
 
+const subscribeNever = () => () => {};
+
+/**
+ * `/create?name=&symbol=&stock=` arrives from outside: the Telegram bot builds it from what
+ * somebody typed in a chat, and a link that lands on an empty form makes the bot look broken while
+ * the fault is here.
+ *
+ * The URL is read as an external store rather than through `useSearchParams` so the page stays
+ * static and nothing is assigned from an effect: the server snapshot is empty, the client one is
+ * real, and `useSyncExternalStore` is what keeps that from being a hydration mismatch. Same shape
+ * the sibling app uses for its own handoff.
+ *
+ * Nothing here is trusted beyond being a starting value. The name and symbol go through the same
+ * validation as anything typed by hand, and the stock has to match one the factory actually
+ * accepts, so a crafted link can only ever pre-fill a field, never widen what may be launched.
+ */
+function parsePrefill(search: string): { name?: string; symbol?: string; stock?: string } {
+  const params = new URLSearchParams(search);
+  const name = params.get('name')?.slice(0, 64) ?? undefined;
+  const symbol = params.get('symbol')?.slice(0, 16) ?? undefined;
+  const stock = params.get('stock') ?? undefined;
+  return {
+    name: name || undefined,
+    symbol: symbol || undefined,
+    stock: stock && /^0x[0-9a-fA-F]{40}$/.test(stock) ? stock.toLowerCase() : undefined,
+  };
+}
+
 export function CreateForm({ initialStocks }: { initialStocks?: StocksResponse }) {
   const router = useRouter();
   const { address, isConnected, chainId } = useAccount();
@@ -38,14 +66,21 @@ export function CreateForm({ initialStocks }: { initialStocks?: StocksResponse }
   const { writeContractAsync } = useWriteContract();
   const deployment = publicEnv.deployment;
 
-  const [name, setName] = useState('');
-  const [symbol, setSymbol] = useState('');
+  const search = useSyncExternalStore(subscribeNever, () => window.location.search, () => '');
+  const prefill = useMemo(() => parsePrefill(search), [search]);
+
+  // Held as null until the person types, so a prefilled value can appear after hydration without an
+  // effect writing it in, and clearing a field still clears it.
+  const [nameState, setName] = useState<string | null>(null);
+  const [symbolState, setSymbol] = useState<string | null>(null);
+  const name = nameState ?? prefill.name ?? '';
+  const symbol = symbolState ?? prefill.symbol ?? '';
   const [description, setDescription] = useState('');
   const [website, setWebsite] = useState('');
   const [twitter, setTwitter] = useState('');
   const [image, setImage] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
-  const [stock, setStock] = useState<string | null>(null);
+  const [stockState, setStock] = useState<string | null>(null);
   const [errors, setErrors] = useState<Errors>({});
   const [step, setStep] = useState<Step | null>(null);
 
@@ -63,6 +98,13 @@ export function CreateForm({ initialStocks }: { initialStocks?: StocksResponse }
   const feeEth = creationFee === undefined ? null : Number(creationFee) / 1e18;
   const fdvUsd = openingFdv === undefined ? 5_000 : Number(openingFdv) / 1e8;
 
+  // Resolved against the list rather than taken from the URL, so the value is always exactly one
+  // the factory accepts and the match cannot turn on whether two sides happen to agree about case.
+  const prefillStock = useMemo(
+    () => (prefill.stock ? (stocks.find((s) => s.address.toLowerCase() === prefill.stock)?.address ?? null) : null),
+    [stocks, prefill.stock],
+  );
+  const stock = stockState ?? prefillStock;
   const selected = stocks.find((s) => s.address === stock) ?? null;
   const onBase = isConnected && !!address && chainId === base.id;
 
