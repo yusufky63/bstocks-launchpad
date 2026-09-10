@@ -54,6 +54,27 @@ describe('the alert outbox', () => {
     expect(await countPendingAlerts(db)).toBe(2);
   });
 
+  // The whole point of enqueueing inside the indexer's transaction rather than after it. If this
+  // ever fails, someone has moved the call out of the transaction and the channel can announce a
+  // block that was never committed.
+  it('leaves nothing behind when the transaction that queued it rolls back', async () => {
+    await expect(
+      db.transaction(async (tx) => {
+        await enqueueAlerts(tx, [{ kind: 'trade', token: TOKEN, blockNumber: 50_900_011n, payload: { n: 1 } }]);
+        throw new Error('the sync pass failed after queueing');
+      }),
+    ).rejects.toThrow('the sync pass failed');
+
+    expect(await countPendingAlerts(db)).toBe(0);
+  });
+
+  it('keeps what a committed transaction queued', async () => {
+    await db.transaction(async (tx) => {
+      await enqueueAlerts(tx, [{ kind: 'trade', token: TOKEN, blockNumber: 50_900_011n, payload: { n: 1 } }]);
+    });
+    expect(await countPendingAlerts(db)).toBe(1);
+  });
+
   it('stops handing back what has been sent', async () => {
     await enqueueAlerts(db, [
       { kind: 'trade', token: TOKEN, blockNumber: 50_900_011n, payload: { n: 1 } },
