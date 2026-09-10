@@ -55,6 +55,8 @@ export const metadata: Metadata = {
   },
   twitter: { card: 'summary_large_image', creator: `@${BSTOCKS_X_HANDLE}` },
   robots: { index: true, follow: true },
+  // Proves this origin to Base's app directory. The tag has to stay for the domain to keep its verification.
+  other: { 'base:app_id': '6a98cc686e87922b5d1d4597' },
 };
 
 /** Structured data for link previews and search: the site, and BaseStocks as the org behind it. */
