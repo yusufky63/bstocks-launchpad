@@ -113,9 +113,10 @@ describe('a dispatch pass', () => {
     expect(result).toMatchObject({ considered: 1, posted: 1, collapsed: false, deferred: 0 });
     expect(telegram.sent[0]?.text).toContain('🆕');
     expect(telegram.sent[0]?.text).toContain('StockPair');
-    // The card the post carries, not just the headline.
-    expect(telegram.sent[0]?.text).toContain('holders');
+    // What a launch card carries, which is not what a trade card carries.
+    expect(telegram.sent[0]?.text).toContain('Opens at');
     expect(telegram.sent[0]?.text).toContain('>NVDAc</a>');
+    expect(telegram.sent[0]?.text).not.toContain('holders');
     expect(await listPendingAlerts(db)).toHaveLength(0);
   });
 

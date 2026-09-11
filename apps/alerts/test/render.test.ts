@@ -217,6 +217,38 @@ describe('a trade post', () => {
   });
 });
 
+describe('a launch post', () => {
+  // A token seconds old has no day behind it, no holders outside the pool and no high to have
+  // reached. Printing the trade card here gave it a row of dashes and zeros.
+  it('says only what is true at zero seconds old', () => {
+    const text = launchPost(APP, FACTS, snap({ volume24hUsd: null, change24hPercent: null, holders: 0, topHolders: [], athUsd: null })).text;
+    expect(text).toContain('Opens at');
+    expect(text).toContain('trades against');
+    expect(text).toContain('1,000,000,000 supply');
+    expect(text).not.toContain('24h');
+    expect(text).not.toContain('holders');
+    expect(text).not.toContain('ATH');
+    expect(text).not.toContain('Age');
+  });
+
+  // The most useful thing anyone can be told in a token's first minute.
+  it('warns that the first twenty seconds cost 99%', () => {
+    expect(launchPost(APP, FACTS, snap()).text).toContain('99%');
+    expect(launchPost(APP, FACTS, snap()).text).toContain('20 seconds');
+  });
+
+  it('still carries the links and the address', () => {
+    const text = launchPost(APP, FACTS, snap()).text;
+    expect(text).toContain('>DexScreener</a>');
+    expect(text).toContain('>Gecko</a>');
+    expect(text).toContain(`<code>${FACTS.token}</code>`);
+  });
+
+  it('lets the token page render the preview image', () => {
+    expect(launchPost(APP, FACTS, snap()).preview).toBe(`${APP}/token/${FACTS.token}`);
+  });
+});
+
 describe('amounts', () => {
   // Token amounts run to hundreds of millions and stock amounts to a couple of units.
   it('keeps the digits that matter at both ends of the range', () => {

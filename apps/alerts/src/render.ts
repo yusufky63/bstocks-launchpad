@@ -264,13 +264,37 @@ export function tradePost(
   return { text: lines.join('\n'), buttons: buttons(appUrl, facts), preview: null };
 }
 
+/**
+ * A launch says what is true at zero seconds old, which is almost none of what a trade card says.
+ *
+ * Reusing the trade card here printed "24h — · 📊 — · 🅑 0 🅢 0" and "0 holders": a row of dashes
+ * under a headline, because a token that has just been created has no day behind it, no holders
+ * outside the pool and no high to have reached. What it does have is an opening price, a stock it
+ * is paired against, and a fee schedule that matters for exactly twenty seconds.
+ */
 export function launchPost(appUrl: string, facts: TokenFacts, snap: Snapshot): Post {
   const lines = [
     `🆕 ${a(`${appUrl}/token/${facts.token}`, facts.name)} · ${b(`$${facts.symbol}`)}`,
-    esc('1,000,000,000 supply, all of it in the pool at launch'),
+    `🌐 Base @ Uniswap v4 · trades against ${a(basescan(facts.stockAddress), facts.stockSymbol)}`,
     '',
-    ...card(appUrl, facts, snap),
+    `💰 Opens at ${esc(formatUsd(snap.priceUsd))} · 💎 FDV ${esc(formatUsdCompact(snap.fdvUsd))}`,
+    esc('🔒 1,000,000,000 supply, all of it in the pool and no way to withdraw it'),
+    // The single most useful thing to say in a token's first minute: a sniper in the launch block
+    // hands almost everything to the creator, and a buyer who waits half a minute does not.
+    esc('⏱️ Swap fee starts at 99% and falls to 1% over 20 seconds'),
+    `👤 by ${a(basescan(snap.creator), snap.creatorName)}`,
   ];
+
+  const tools = [
+    a(snap.website, 'Web'),
+    a(snap.twitter, 'X'),
+    a(snap.telegram, 'TG'),
+    a(`https://dexscreener.com/base/${snap.poolId}`, 'DexScreener'),
+    a(`https://www.geckoterminal.com/base/pools/${snap.poolId}`, 'Gecko'),
+    a(`${appUrl}/token/${facts.token}`, 'Token'),
+  ].filter((t) => t.startsWith('<a'));
+  if (tools.length > 0) lines.push(`🔗 ${tools.join(' · ')}`);
+  lines.push('', code(facts.token));
   return {
     text: lines.join('\n'),
     buttons: buttons(appUrl, facts),
