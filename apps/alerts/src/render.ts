@@ -239,20 +239,25 @@ export function tradePost(
 ): Post {
   const buy = detail.side === 'buy';
   const glyph = buy ? '🟢' : '🔴';
+  const stock = `${formatAmount(detail.amountStock)} ${facts.stockSymbol}`;
+  const token = `${formatAmount(detail.amountToken)} ${facts.symbol}`;
+  // "2.17 NVDAc → 29.7M STOCK" leaves a reader working out which way the arrow points. Spelling
+  // out what was given for what says it in the same space, and reverses correctly on a sell.
+  const swapped = buy ? `${stock} for ${token}` : `${token} for ${stock}`;
   const lines = [
     `${glyph} ${a(`${appUrl}/token/${facts.token}`, facts.name)} · ${b(buy ? 'BUY' : 'SELL')}`,
     bar(detail.valueUsd, detail.stepUsd, glyph),
-    `${b(formatUsd(detail.valueUsd))} · ${esc(`${formatAmount(detail.amountStock)} ${facts.stockSymbol}`)} → ${esc(`${formatAmount(detail.amountToken)} ${facts.symbol}`)}`,
+    `💵 ${b(formatUsd(detail.valueUsd))} · ${esc(swapped)}`,
   ];
   if (detail.shareOfDay !== null && detail.shareOfDay > 0) {
     // At the top of the range a percentage reads like a rounding artifact rather than a fact, and
     // "the only trade today" would be a stronger claim than the number supports.
-    lines.push(
-      esc(detail.shareOfDay >= 0.9 ? "most of today's volume" : `${Math.round(detail.shareOfDay * 100)}% of today's volume`),
-    );
+    const share = detail.shareOfDay >= 0.9 ? "most of today's volume" : `${Math.round(detail.shareOfDay * 100)}% of today's volume`;
+    // With a subject, because a bare fragment under a price reads as a caption for the price.
+    lines.push(`🔥 ${esc(`This trade is ${share}`)}`);
   }
   lines.push(
-    `🧑 ${detail.trader ? a(basescan(detail.trader), detail.traderName) : esc(detail.traderName)} · ${a(`https://basescan.org/tx/${detail.txHash}`, 'tx ↗')}`,
+    `🧑 ${esc(buy ? 'Buyer' : 'Seller')} ${detail.trader ? a(basescan(detail.trader), detail.traderName) : esc(detail.traderName)} · ${a(`https://basescan.org/tx/${detail.txHash}`, 'tx ↗')}`,
   );
   lines.push('');
   lines.push(...card(appUrl, facts, snap));

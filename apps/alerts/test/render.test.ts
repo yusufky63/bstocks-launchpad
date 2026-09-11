@@ -119,8 +119,10 @@ describe('a trade post', () => {
     expect(post.text.split('\n')[0]).toContain('StockPair');
     expect(post.text).toContain('BUY');
     expect(post.text).toContain('$474.91');
-    expect(post.text).toContain('2.11 NVDAc');
-    expect(post.text).toContain("36% of today's volume");
+    // What was given for what, rather than an arrow the reader has to decode.
+    expect(post.text).toContain('2.11 NVDAc for 29.7M STOCK');
+    expect(post.text).toContain("This trade is 36% of today's volume");
+    expect(post.text).toContain('Buyer');
   });
 
   it('carries the numbers a reader would otherwise go and look up', () => {
@@ -183,6 +185,9 @@ describe('a trade post', () => {
     const post = tradePost(APP, FACTS, snap(), { ...TRADE, side: 'sell' });
     expect(post.text.startsWith('🔴')).toBe(true);
     expect(post.text).toContain('SELL');
+    // The same two amounts, the other way round, because the trader gave the token this time.
+    expect(post.text).toContain('29.7M STOCK for 2.11 NVDAc');
+    expect(post.text).toContain('Seller');
   });
 
   it('keeps every button a URL, since a callback would edit the post for every reader', () => {
@@ -192,7 +197,7 @@ describe('a trade post', () => {
 
   it('does not print a share that reads like a rounding artifact', () => {
     const post = tradePost(APP, FACTS, snap(), { ...TRADE, shareOfDay: 1 });
-    expect(post.text).toContain("most of today's volume");
+    expect(post.text).toContain("This trade is most of today's volume");
     expect(post.text).not.toContain('100%');
   });
 
