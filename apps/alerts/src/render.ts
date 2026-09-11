@@ -198,17 +198,20 @@ function card(appUrl: string, facts: TokenFacts, snap: Snapshot): string[] {
     lines.push(`👥 ${esc(formatCount(snap.holders))} holders`);
   }
 
-  // The two things anyone checks first on a launchpad, and the two this one can always answer.
-  lines.push('🔒 Supply in pool · 🚫 No admin');
-
+  // No "supply in pool, no admin" line. It is true of every token this launchpad has ever made,
+  // so repeating it on every post is wallpaper rather than a fact about this one. It belongs on
+  // the site, where someone reads it once.
+  //
+  // Words, not icons: a 🌍 next to a 🐦 is two indistinguishable smudges at the bottom of a post,
+  // and the tap target of a single emoji on a phone is smaller than a fingertip.
   const tools = [
-    a(snap.website, '🌍'),
-    a(snap.twitter, '🐦'),
-    a(snap.telegram, '💬'),
-    a(`https://dexscreener.com/base/${snap.poolId}`, '📊'),
-    a(`${appUrl}/token/${facts.token}`, '🧾'),
+    a(snap.website, 'Web'),
+    a(snap.twitter, 'X'),
+    a(snap.telegram, 'TG'),
+    a(`https://dexscreener.com/base/${snap.poolId}`, 'Chart'),
+    a(`${appUrl}/token/${facts.token}`, 'Token'),
   ].filter((t) => t.startsWith('<a'));
-  if (tools.length > 0) lines.push(`🧰 ${tools.join(' ')}`);
+  if (tools.length > 0) lines.push(`🔗 ${tools.join(' · ')}`);
 
   lines.push('');
   // <code> is tap-to-copy in Telegram, which is the only reason the address is here at all.

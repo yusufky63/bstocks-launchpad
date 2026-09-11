@@ -2,6 +2,7 @@
 
 import { safeExternalUrl } from '@/lib/profile';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { useMemo, useState, type ReactNode } from 'react';
 
 import { Tabs } from '@/components/ui/controls';
@@ -50,8 +51,17 @@ const PER_PAGE = 25;
 const FETCH = 100;
 const HOLDERS_MAX = 500;
 
+const TABS: readonly Tab[] = ['trades', 'holders', 'fees', 'details'];
+
+function tabFrom(value: string | null): Tab {
+  return TABS.includes(value as Tab) ? (value as Tab) : 'trades';
+}
+
 export function TokenRecords({ market, links, fees, trades }: { market: MarketView; links?: TokenDetails['links']; fees?: ReactNode; trades?: number }) {
-  const [tab, setTab] = useState<Tab>('trades');
+  // `?tab=holders` opens the holders list directly, so a link can point at it. Without this the
+  // Telegram channel's Holders button and its Trade button landed on the same view.
+  const search = useSearchParams();
+  const [tab, setTab] = useState<Tab>(() => tabFrom(search.get('tab')));
   const swaps = useSwaps(market.token, tab === 'trades');
   const [holdersLimit, setHoldersLimit] = useState(FETCH);
   const holders = useHolders(market.token, tab === 'holders', holdersLimit);
@@ -108,7 +118,15 @@ export function TokenRecords({ market, links, fees, trades }: { market: MarketVi
       <Tabs<Tab>
         ariaLabel="Token records"
         value={tab}
-        onChange={setTab}
+        onChange={(next) => {
+          setTab(next);
+          // replaceState rather than the router: this is a view change, not navigation, and the
+          // router would re-render the page and drop the pages already fetched.
+          const url = new URL(window.location.href);
+          if (next === 'trades') url.searchParams.delete('tab');
+          else url.searchParams.set('tab', next);
+          window.history.replaceState(null, '', url);
+        }}
         tabs={[
           { id: 'trades', label: trades === undefined ? 'Trades' : `Trades · ${formatNumber(trades, 0)}` },
           { id: 'holders', label: `Holders · ${formatNumber(market.holders, 0)}` },

@@ -143,10 +143,28 @@ describe('a trade post', () => {
     expect(text).toContain('4.1');
   });
 
-  it('offers the site, X and the chart where the creator gave them', () => {
+  // A 🌍 next to a 🐦 is two smudges, and one emoji is a smaller tap target than a fingertip.
+  it('labels its links with words rather than icons', () => {
     const text = tradePost(APP, FACTS, snap(), TRADE).text;
+    expect(text).toContain('>Web</a>');
+    expect(text).toContain('>X</a>');
+    expect(text).toContain('>Chart</a>');
     expect(text).toContain('https://x.com/xBaseStocks');
     expect(text).toContain('dexscreener.com/base/');
+  });
+
+  it('drops a link the creator never gave rather than showing a dead one', () => {
+    const text = tradePost(APP, FACTS, snap({ telegram: null, website: null }), TRADE).text;
+    expect(text).not.toContain('>TG</a>');
+    expect(text).not.toContain('>Web</a>');
+    expect(text).toContain('>X</a>');
+  });
+
+  // True of every token this launchpad makes, so it says nothing about this one.
+  it('does not repeat what is true of every token', () => {
+    const text = tradePost(APP, FACTS, snap(), TRADE).text;
+    expect(text).not.toContain('No admin');
+    expect(text).not.toContain('Supply in pool');
   });
 
   it('puts the address in a code block, which is tap-to-copy', () => {
