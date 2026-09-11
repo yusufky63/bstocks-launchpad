@@ -87,5 +87,6 @@ Token names come from whatever a creator typed and routinely carry `_`, `.` and 
 **Every button is a URL.** In a channel, a `callback_data` button that edits its message edits it
 for every reader — one person tapping "Holders" would rewrite the post for everybody.
 
-**The emoji bar is capped at 48.** The one open-source buy bot with real code uses one emoji per $10
-with no ceiling, which draws a thousand of them for a $10,000 buy against a 4,096 character limit.
+**The emoji bar is capped at 20.** The one open-source buy bot with real code uses one emoji per $10
+with no ceiling, which draws a thousand of them for a $10,000 buy against a 4,096 character limit. Forty-eight
+was the first try, and in the channel it wrapped to three rows on a phone.
