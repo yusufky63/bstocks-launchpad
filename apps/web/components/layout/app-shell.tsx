@@ -6,8 +6,9 @@ import { usePathname } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { useAccount } from 'wagmi';
 
-import { Wordmark, XMark } from '@/components/brand/logo';
+import { TelegramMark, Wordmark, XMark } from '@/components/brand/logo';
 import { cx } from '@/components/ui/primitives';
+import { publicEnv } from '@/lib/env';
 import { BSTOCKS_X_HANDLE, BSTOCKS_X_URL } from '@/lib/twitter';
 import type { MarketsResponse } from '@/lib/types';
 
@@ -102,6 +103,18 @@ export function AppShell({ children, initialMarkets }: { children: ReactNode; in
               >
                 <XMark size={14} />
               </a>
+              {publicEnv.telegramChannel && (
+                <a
+                  href={publicEnv.telegramChannel}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  aria-label="Alerts on Telegram"
+                  title="Launch and trade alerts on Telegram"
+                  className="h-9 w-9 inline-flex items-center justify-center rounded-[6px] text-ink-secondary hover:text-ink border border-line hover:border-line-strong transition-fast"
+                >
+                  <TelegramMark size={15} />
+                </a>
+              )}
               <ThemeToggle />
               <span aria-hidden className="hidden md:block w-px h-6 bg-line mx-1" />
               <ConnectButton size="sm" compact />
@@ -117,16 +130,29 @@ export function AppShell({ children, initialMarkets }: { children: ReactNode; in
           <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
             <Wordmark size={18} />
             <span className="eyebrow">Built on Base</span>
-            <a
-              href={BSTOCKS_X_URL}
-              target="_blank"
-              rel="noreferrer noopener"
-              aria-label={`@${BSTOCKS_X_HANDLE} on X`}
-              className="inline-flex items-center gap-1.5 text-[13px] text-ink-secondary hover:text-primary transition-fast"
-            >
-              <XMark size={13} />
-              <span className="font-mono text-[12px]">@{BSTOCKS_X_HANDLE}</span>
-            </a>
+            <span className="inline-flex items-center gap-4">
+              <a
+                href={BSTOCKS_X_URL}
+                target="_blank"
+                rel="noreferrer noopener"
+                aria-label={`@${BSTOCKS_X_HANDLE} on X`}
+                className="inline-flex items-center gap-1.5 text-[13px] text-ink-secondary hover:text-primary transition-fast"
+              >
+                <XMark size={13} />
+                <span className="font-mono text-[12px]">@{BSTOCKS_X_HANDLE}</span>
+              </a>
+              {publicEnv.telegramChannel && (
+                <a
+                  href={publicEnv.telegramChannel}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="inline-flex items-center gap-1.5 text-[13px] text-ink-secondary hover:text-primary transition-fast"
+                >
+                  <TelegramMark size={13} />
+                  <span className="text-[13px]">Alerts</span>
+                </a>
+              )}
+            </span>
             <nav aria-label="Footer" className="flex flex-wrap items-center gap-x-4 gap-y-1 md:ml-auto">
               {FOOTER_LINKS.map(([href, label, external]) =>
                 external ? (

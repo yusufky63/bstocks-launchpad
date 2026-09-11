@@ -35,6 +35,10 @@ const STEPS = [
     title: 'Everything you see is read from the chain',
     body: 'An indexer waits two block confirmations, then records launches, swaps, transfers and fee events. Prices, candles, holders, volume and earnings are computed from those rows. When a figure cannot be derived it shows as a dash, never as an estimate.',
   },
+  {
+    title: 'And it tells you without being asked',
+    body: 'The same indexer feeds a Telegram channel: every launch, every large trade, every market cap milestone, posted within seconds of the block. The post is written into a queue inside the same database transaction that records the trade, so if the chain reorganises the announcement is withdrawn before it is sent rather than left standing about a trade that no longer exists.',
+  },
 ];
 
 const FAQ = [
@@ -46,6 +50,7 @@ const FAQ = [
   ['Can the creator pull liquidity or mint more?', 'No. The token has no admin and the factory has no withdraw function. Both are enforced by the contracts, not by policy.'],
   ['Can the creator change the token after launch?', 'Only the profile: description, image, website, X and Telegram. The creator signs the new fields with their wallet (a message, not a transaction) and the page shows them as updated by the creator, with the time. Name, symbol, supply, the pool and the fee split are onchain and cannot change.'],
   ['What is a "dev" trade?', 'A swap made by the wallet that created the token. They are marked on the chart and in the trades list so buyers can see when a creator is buying or selling.'],
+  ['Will the Telegram channel post my token?', 'Launches all get posted. After that a trade is announced when it clears $500, or when it is a meaningful share of that token’s own day and still worth a reader’s attention — not every buy and not every sell, because one busy token posting every trade would bury every other one. There is nothing to configure and no account; the channel is the same feed for everybody.'],
 ];
 
 export default function HowItWorksPage() {
@@ -96,6 +101,9 @@ export default function HowItWorksPage() {
           <div className="p-4 border-t border-line flex flex-col gap-2">
             <LinkButton href="/create" variant="primary" full>
               Create a token
+            </LinkButton>
+            <LinkButton href="/alerts" full>
+              Get alerts on Telegram
             </LinkButton>
             <Link href="/stocks" className="text-[13px] text-primary font-medium text-center">
               See the 13 stocks →

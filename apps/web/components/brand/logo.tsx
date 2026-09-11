@@ -45,3 +45,12 @@ export function XMark({ size = 14, className }: { size?: number; className?: str
     </svg>
   );
 }
+
+/** Telegram's paper plane, for the alerts channel. */
+export function TelegramMark({ size = 14, className }: { size?: number; className?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden className={className}>
+      <path d="M21.94 4.3a1.2 1.2 0 0 0-1.63-1.19L2.6 10.02c-1.07.42-1.05 1.95.03 2.34l4.3 1.55 1.66 5.2c.2.63 1 .82 1.46.35l2.43-2.5 4.4 3.23c.6.44 1.46.12 1.62-.6L21.94 4.3ZM8.9 13.43l8.3-5.1-6.6 6.05a1.2 1.2 0 0 0-.37.76l-.22 2-1.11-3.71Z" />
+    </svg>
+  );
+}
