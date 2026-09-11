@@ -45,6 +45,7 @@ const CONFIG: AlertsConfig = Object.freeze({
   pollMs: 5_000,
   minTradeUsd: 500,
   minTradeShare: 0.15,
+  minTradeFloorUsd: 100,
   backlogLimit: 8,
   healthPort: 8789,
   dryRun: false,

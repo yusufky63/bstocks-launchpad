@@ -73,7 +73,7 @@ export type TradePayload = {
   stockUsd8: string | null;
 };
 
-export type Thresholds = { minTradeUsd: number; minTradeShare: number };
+export type Thresholds = { minTradeUsd: number; minTradeShare: number; minTradeFloorUsd: number };
 
 export type TradeVerdict =
   | { post: false }
@@ -105,7 +105,10 @@ export function judgeTrade(payload: TradePayload, market: Market, limits: Thresh
   const shareOfDay = dayVolume !== null && dayVolume > 0 ? valueUsd / dayVolume : null;
 
   const clearsFloor = valueUsd >= limits.minTradeUsd;
-  const clearsShare = shareOfDay !== null && shareOfDay >= limits.minTradeShare;
+  // The share rule needs a floor of its own. A token doing $5 a day makes a $1 trade 20% of its
+  // volume, and "large" has to mean something to a reader, not just to the arithmetic.
+  const clearsShare =
+    shareOfDay !== null && shareOfDay >= limits.minTradeShare && valueUsd >= limits.minTradeFloorUsd;
   if (!clearsFloor && !clearsShare) return { post: false };
 
   // One bar means the same thing on a quiet token as on a busy one: the step is whichever

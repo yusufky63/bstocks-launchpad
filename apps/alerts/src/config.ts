@@ -14,6 +14,8 @@ export type AlertsConfig = Readonly<{
   minTradeUsd: number;
   /** …or this share of the token's own 24h volume, whichever it reaches first. */
   minTradeShare: number;
+  /** But never below this, however quiet the token's day was. */
+  minTradeFloorUsd: number;
   /** Above this many postable alerts at once, they collapse into one summary. */
   backlogLimit: number;
   healthPort: number;
@@ -30,6 +32,7 @@ const schema = z.object({
   ALERTS_POLL_MS: z.coerce.number().int().min(1_000).max(60_000).default(5_000),
   ALERTS_MIN_TRADE_USD: z.coerce.number().min(0).default(500),
   ALERTS_MIN_TRADE_SHARE: z.coerce.number().min(0).max(1).default(0.15),
+  ALERTS_MIN_TRADE_FLOOR_USD: z.coerce.number().min(0).default(100),
   ALERTS_BACKLOG_LIMIT: z.coerce.number().int().min(1).max(200).default(8),
   ALERTS_HEALTH_PORT: z.coerce.number().int().min(1).max(65_535).default(8789),
   // Renders and logs every post without sending it. The way to watch what the channel would say
@@ -71,6 +74,7 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>> = p
     pollMs: parsed.ALERTS_POLL_MS,
     minTradeUsd: parsed.ALERTS_MIN_TRADE_USD,
     minTradeShare: parsed.ALERTS_MIN_TRADE_SHARE,
+    minTradeFloorUsd: parsed.ALERTS_MIN_TRADE_FLOOR_USD,
     backlogLimit: parsed.ALERTS_BACKLOG_LIMIT,
     healthPort: parsed.ALERTS_HEALTH_PORT,
     dryRun: parsed.ALERTS_DRY_RUN,

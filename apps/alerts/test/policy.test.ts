@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { isNewHigh, judgeTrade, nextMilestone, type Market, type TradePayload } from '../src/policy';
 
-const LIMITS = { minTradeUsd: 500, minTradeShare: 0.15 };
+const LIMITS = { minTradeUsd: 500, minTradeShare: 0.15, minTradeFloorUsd: 100 };
 
 function market(over: Partial<Market> = {}): Market {
   return {
@@ -51,18 +51,31 @@ describe('which trades are worth everyone\'s attention', () => {
     expect(judgeTrade(trade('20000000'), market({ volume24hUsd: 3_800 }), LIMITS).post).toBe(false);
   });
 
-  // The same $45 trade. One number cannot serve both ends of the range: an absolute floor alone
-  // means a token doing $200 a day is never heard from, and a share alone means the first trade
-  // after a quiet night is always "significant".
-  it('posts that same trade when it is most of the token\'s day', () => {
-    const verdict = judgeTrade(trade('20000000'), market({ volume24hUsd: 200 }), LIMITS);
+  // One number cannot serve both ends of the range: an absolute floor alone means a token doing
+  // $200 a day is never heard from, and a share alone means the first trade after a quiet night is
+  // always "significant".
+  it("posts a trade that is most of a quiet token's day", () => {
+    // 0.5 NVDAc is $112: over the floor, and more than half of a $200 day.
+    const verdict = judgeTrade(trade('50000000'), market({ volume24hUsd: 200 }), LIMITS);
     expect(verdict.post).toBe(true);
     if (verdict.post) expect(verdict.shareOfDay).toBeGreaterThan(0.15);
   });
 
+  // The same $45 trade as the one above it: a large share of a quiet day, but not a sum anyone
+  // would call a large trade.
+  it('still keeps quiet when a large share is a small amount of money', () => {
+    expect(judgeTrade(trade('20000000'), market({ volume24hUsd: 200 }), LIMITS).post).toBe(false);
+  });
+
+  // A token doing $5 a day makes a $1 trade 20% of its volume, and "large" has to mean something
+  // to a reader rather than only to the arithmetic.
+  it("keeps quiet about a tiny trade even when it is the whole of a dead token's day", () => {
+    expect(judgeTrade(trade('2000000'), market({ volume24hUsd: 5 }), LIMITS).post).toBe(false);
+  });
+
   it('scales the bar to whichever threshold the trade actually cleared', () => {
     const loud = judgeTrade(trade('500000000'), market(), LIMITS);
-    const quiet = judgeTrade(trade('20000000'), market({ volume24hUsd: 200 }), LIMITS);
+    const quiet = judgeTrade(trade('50000000'), market({ volume24hUsd: 200 }), LIMITS);
     expect(loud.post && quiet.post).toBe(true);
     if (loud.post && quiet.post) {
       // Both draw a readable bar rather than one drawing a single emoji and the other a wall.

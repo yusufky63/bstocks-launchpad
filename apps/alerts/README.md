@@ -10,7 +10,7 @@ the outbound half: it reads what the indexer queued, decides what is worth sayin
 | | |
 | --- | --- |
 | **New launch** | every one |
-| **Large trade** | a trade that clears `ALERTS_MIN_TRADE_USD`, *or* is `ALERTS_MIN_TRADE_SHARE` of that token's own 24h volume |
+| **Large trade** | a trade that clears `ALERTS_MIN_TRADE_USD`, *or* is `ALERTS_MIN_TRADE_SHARE` of that token's own 24h volume while still clearing `ALERTS_MIN_TRADE_FLOOR_USD` |
 | **Market cap milestone** | $10K, $25K, $50K, $100K, $250K, $500K, $1M — each once, ever |
 | **New high** | when it beats the last one by at least 5% |
 
@@ -19,10 +19,13 @@ the only control is leaving. $STOCK alone did 2,323 trades in its first five day
 would make the channel unreadable in a day — which is harder to undo than never having started.
 Per-token trade alerts belong in a bot people subscribe to, not in a shared channel.
 
-The two thresholds exist because one number cannot serve both ends of the range. An absolute floor
+The thresholds exist because one number cannot serve both ends of the range. An absolute floor
 alone means a token doing $200 a day is never heard from; a share of daily volume alone means the
 first trade after a quiet night is always "significant". A trade qualifies by being large in
 dollars **or** large relative to the day that token is having.
+
+The share rule carries a floor of its own, because "20% of the day" on a token doing $5 a day is a
+$1 trade. Large has to mean something to a reader, not only to the arithmetic.
 
 ## How it gets its work
 
@@ -53,6 +56,7 @@ watch what the channel would say before pointing it at the channel.
 | `NEXT_PUBLIC_APP_URL` | where the buttons point (default `https://launchpad.basestocks.finance`) |
 | `ALERTS_MIN_TRADE_USD` | default `500` |
 | `ALERTS_MIN_TRADE_SHARE` | default `0.15` |
+| `ALERTS_MIN_TRADE_FLOOR_USD` | default `100`; the share rule never fires below this |
 | `ALERTS_BACKLOG_LIMIT` | default `8`; above this a pass collapses into one summary |
 | `ALERTS_POLL_MS` | default `5000` |
 | `ALERTS_DRY_RUN` | `true` to send nothing |
