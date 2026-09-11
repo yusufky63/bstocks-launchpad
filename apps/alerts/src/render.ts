@@ -20,6 +20,17 @@ export function code(value: string): string {
   return `<code>${esc(value)}</code>`;
 }
 
+/**
+ * A link, or just the text when there is nothing to link to.
+ *
+ * Only http(s). Some of these hrefs are built from creator-supplied profile fields, and a
+ * `javascript:` or `tg://` target inside a rendered link is a phishing primitive.
+ */
+export function a(href: string | null | undefined, text: string): string {
+  if (!href || !/^https?:\/\//iu.test(href)) return esc(text);
+  return `<a href="${esc(href)}">${esc(text)}</a>`;
+}
+
 // ---------------------------------------------------------------------------------------------
 // Numbers
 // ---------------------------------------------------------------------------------------------
@@ -46,14 +57,37 @@ export function formatUsdCompact(value: number | null): string {
   return Math.abs(value) >= 1_000 ? `$${compact.format(value)}` : formatUsd(value);
 }
 
+/**
+ * Token amounts run to hundreds of millions and stock amounts to a couple of units, so one
+ * precision cannot serve both: rounding everything to whole numbers turned 2.11 NVDAc into "2".
+ */
 export function formatAmount(value: number | null): string {
   if (value === null || !Number.isFinite(value)) return '—';
-  return Math.abs(value) >= 1_000 ? compact.format(value) : plain.format(value);
+  const abs = Math.abs(value);
+  if (abs >= 1_000) return compact.format(value);
+  if (abs >= 1) return value.toFixed(2).replace(/\.?0+$/u, '');
+  return value.toPrecision(3).replace(/\.?0+$/u, '');
 }
 
-export function formatUnits(raw: string, decimals: number): number {
-  const n = Number(raw);
-  return Number.isFinite(n) ? n / 10 ** decimals : 0;
+export function formatCount(value: number): string {
+  return plain.format(value);
+}
+
+export function formatPercent(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return '—';
+  return `${value >= 0 ? '+' : ''}${value.toFixed(1)}%`;
+}
+
+/** How long ago, in the coarsest unit that still says something. */
+export function age(from: string | Date, now = new Date()): string {
+  const ms = now.getTime() - new Date(from).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return '—';
+  const minutes = Math.floor(ms / 60_000);
+  if (minutes < 60) return `${Math.max(1, minutes)}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  return days < 30 ? `${days}d` : `${Math.floor(days / 30)}mo`;
 }
 
 /** A wallet reads as its Basename when it has one, and as a short address when it does not. */
@@ -61,12 +95,21 @@ export function shortAddress(address: string): string {
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
 }
 
+export function basescan(address: string): string {
+  return `https://basescan.org/address/${address}`;
+}
+
 // ---------------------------------------------------------------------------------------------
 // The bar
 // ---------------------------------------------------------------------------------------------
 
-/** Above this the bar stops being a bar and starts being a wall. */
-const MAX_EMOJI = 48;
+/**
+ * Above this the bar stops being a bar and starts being a wall.
+ *
+ * Set by looking at one in the channel: 48 wrapped to three rows on a phone and every large trade
+ * looked identical to every other. Twenty fits two rows and still has room to grow into.
+ */
+const MAX_EMOJI = 20;
 
 /**
  * How big this trade was, drawn.
@@ -93,97 +136,157 @@ export type TokenFacts = {
   name: string;
   symbol: string;
   stockSymbol: string;
+  stockAddress: string;
 };
 
-export function links(appUrl: string, token: string, poolId: string | null): InlineButton[][] {
-  const row: InlineButton[] = [{ text: '💱 Trade', url: `${appUrl}/token/${token}` }];
-  if (poolId) row.push({ text: '📊 Chart', url: `https://dexscreener.com/base/${poolId}` });
-  row.push({ text: '👥 Holders', url: `${appUrl}/token/${token}?tab=holders` });
-  return [row];
+export type Holder = { address: string; sharePercent: number };
+
+/** Everything a card says about a token, gathered once and shared by every kind of post. */
+export type Snapshot = {
+  priceUsd: number | null;
+  fdvUsd: number | null;
+  athUsd: number | null;
+  volume24hUsd: number | null;
+  change24hPercent: number | null;
+  buys24h: number;
+  sells24h: number;
+  holders: number;
+  topHolders: Holder[];
+  topShare: number | null;
+  launchedAt: string;
+  creator: string;
+  creatorName: string;
+  website: string | null;
+  twitter: string | null;
+  telegram: string | null;
+  poolId: string;
+};
+
+export function buttons(appUrl: string, facts: TokenFacts, poolId: string): InlineButton[][] {
+  return [
+    [
+      { text: '💱 Trade', url: `${appUrl}/token/${facts.token}` },
+      { text: '📊 Chart', url: `https://dexscreener.com/base/${poolId}` },
+      { text: '👥 Holders', url: `${appUrl}/token/${facts.token}?tab=holders` },
+    ],
+  ];
 }
 
-export function launchPost(
-  appUrl: string,
-  facts: TokenFacts,
-  detail: { creator: string; fdvUsd: number | null; poolId: string | null },
-): Post {
-  const lines = [
-    `🆕 ${b('New launch')}`,
-    '',
-    `${b(facts.name)} · ${esc(`$${facts.symbol}`)}`,
-    `Trades against ${esc(facts.stockSymbol)}`,
-    `Creator ${esc(detail.creator)}`,
-    '',
-    `Supply 1,000,000,000 · MCap ${esc(formatUsdCompact(detail.fdvUsd))}`,
-  ];
-  return {
-    text: lines.join('\n'),
-    buttons: links(appUrl, facts.token, detail.poolId),
-    // The token page renders its own share card, which is a better image than anything this
-    // service could assemble and costs nothing to reference.
-    preview: `${appUrl}/token/${facts.token}`,
-  };
+/**
+ * The block every card carries: what the token is, and where to go next.
+ *
+ * The links live in the text as well as on the buttons. A forwarded message keeps its text and
+ * drops nothing, and the wallets and socials are far too many to be buttons.
+ */
+function card(appUrl: string, facts: TokenFacts, snap: Snapshot): string[] {
+  const lines: string[] = [];
+
+  lines.push(`🌐 Base @ Uniswap v4 · vs ${a(basescan(facts.stockAddress), facts.stockSymbol)}`);
+  lines.push(`💰 ${esc(formatUsd(snap.priceUsd))} · 💎 FDV ${esc(formatUsdCompact(snap.fdvUsd))}${snap.athUsd ? ` · ⛰️ ATH ${esc(formatUsdCompact(snap.athUsd))}` : ''}`);
+
+  const arrow = (snap.change24hPercent ?? 0) >= 0 ? '📈' : '📉';
+  lines.push(
+    `${arrow} 24h ${esc(formatPercent(snap.change24hPercent))} · 📊 ${esc(formatUsdCompact(snap.volume24hUsd))} · 🅑 ${esc(formatCount(snap.buys24h))} 🅢 ${esc(formatCount(snap.sells24h))}`,
+  );
+  lines.push(`🕰️ Age ${esc(age(snap.launchedAt))} · 👤 by ${a(basescan(snap.creator), snap.creatorName)}`);
+
+  if (snap.topHolders.length > 0) {
+    const top = snap.topHolders.map((h) => a(basescan(h.address), h.sharePercent.toFixed(1))).join('⋅');
+    const share = snap.topShare === null ? '' : ` [${Math.round(snap.topShare)}%]`;
+    lines.push(`👥 ${esc(formatCount(snap.holders))} holders · TH ${top}${esc(share)}`);
+  } else {
+    lines.push(`👥 ${esc(formatCount(snap.holders))} holders`);
+  }
+
+  // The two things anyone checks first on a launchpad, and the two this one can always answer.
+  lines.push('🔒 Supply in pool · 🚫 No admin');
+
+  const tools = [
+    a(snap.website, '🌍'),
+    a(snap.twitter, '🐦'),
+    a(snap.telegram, '💬'),
+    a(`https://dexscreener.com/base/${snap.poolId}`, '📊'),
+    a(`${appUrl}/token/${facts.token}`, '🧾'),
+  ].filter((t) => t.startsWith('<a'));
+  if (tools.length > 0) lines.push(`🧰 ${tools.join(' ')}`);
+
+  lines.push('');
+  // <code> is tap-to-copy in Telegram, which is the only reason the address is here at all.
+  lines.push(code(facts.token));
+  return lines;
 }
 
 export function tradePost(
   appUrl: string,
   facts: TokenFacts,
+  snap: Snapshot,
   detail: {
     side: 'buy' | 'sell';
     valueUsd: number;
     stepUsd: number;
     amountStock: number;
     amountToken: number;
-    trader: string;
+    trader: string | null;
+    traderName: string;
     shareOfDay: number | null;
-    fdvUsd: number | null;
-    change24h: number | null;
-    poolId: string | null;
+    txHash: string;
   },
 ): Post {
   const buy = detail.side === 'buy';
   const glyph = buy ? '🟢' : '🔴';
   const lines = [
-    `${glyph} ${b(facts.name)} · ${buy ? 'large buy' : 'large sell'}`,
-    '',
+    `${glyph} ${a(`${appUrl}/token/${facts.token}`, facts.name)} · ${b(buy ? 'BUY' : 'SELL')}`,
     bar(detail.valueUsd, detail.stepUsd, glyph),
-    `${b(formatUsd(detail.valueUsd))} · ${esc(`${formatAmount(detail.amountStock)} ${facts.stockSymbol}`)}`,
-    esc(`${formatAmount(detail.amountToken)} ${facts.symbol}`),
+    `${b(formatUsd(detail.valueUsd))} · ${esc(`${formatAmount(detail.amountStock)} ${facts.stockSymbol}`)} → ${esc(`${formatAmount(detail.amountToken)} ${facts.symbol}`)}`,
   ];
   if (detail.shareOfDay !== null && detail.shareOfDay > 0) {
-    lines.push(esc(`${Math.round(detail.shareOfDay * 100)}% of today's volume`));
+    // At the top of the range a percentage reads like a rounding artifact rather than a fact, and
+    // "the only trade today" would be a stronger claim than the number supports.
+    lines.push(
+      esc(detail.shareOfDay >= 0.9 ? "most of today's volume" : `${Math.round(detail.shareOfDay * 100)}% of today's volume`),
+    );
   }
-  lines.push('', `👤 ${esc(detail.trader)}`);
-  const change = detail.change24h === null ? null : `${detail.change24h >= 0 ? '+' : ''}${detail.change24h.toFixed(1)}%`;
-  lines.push(`💰 MCap ${esc(formatUsdCompact(detail.fdvUsd))}${change ? esc(` · 24h ${change}`) : ''}`);
-  return { text: lines.join('\n'), buttons: links(appUrl, facts.token, detail.poolId), preview: null };
+  lines.push(
+    `🧑 ${detail.trader ? a(basescan(detail.trader), detail.traderName) : esc(detail.traderName)} · ${a(`https://basescan.org/tx/${detail.txHash}`, 'tx ↗')}`,
+  );
+  lines.push('');
+  lines.push(...card(appUrl, facts, snap));
+  return { text: lines.join('\n'), buttons: buttons(appUrl, facts, snap.poolId), preview: null };
 }
 
-export function milestonePost(
-  appUrl: string,
-  facts: TokenFacts,
-  detail: { level: number; holders: number; trades: number; poolId: string | null },
-): Post {
+export function launchPost(appUrl: string, facts: TokenFacts, snap: Snapshot): Post {
   const lines = [
-    `🎯 ${b(facts.name)} passed ${esc(formatUsdCompact(detail.level))}`,
+    `🆕 ${a(`${appUrl}/token/${facts.token}`, facts.name)} · ${b(`$${facts.symbol}`)}`,
+    esc('1,000,000,000 supply, all of it in the pool at launch'),
     '',
-    esc(`${plain.format(detail.holders)} holders · ${plain.format(detail.trades)} trades since launch`),
+    ...card(appUrl, facts, snap),
   ];
-  return { text: lines.join('\n'), buttons: links(appUrl, facts.token, detail.poolId), preview: null };
+  return {
+    text: lines.join('\n'),
+    buttons: buttons(appUrl, facts, snap.poolId),
+    // The token page renders its own share card, which is a better image than anything this
+    // service could assemble and costs nothing to reference.
+    preview: `${appUrl}/token/${facts.token}`,
+  };
 }
 
-export function athPost(
-  appUrl: string,
-  facts: TokenFacts,
-  detail: { priceUsd: number; previousUsd: number; poolId: string | null },
-): Post {
+export function milestonePost(appUrl: string, facts: TokenFacts, snap: Snapshot, level: number): Post {
   const lines = [
-    `📈 ${b(facts.name)} · new high`,
+    `🎯 ${a(`${appUrl}/token/${facts.token}`, facts.name)} passed ${b(formatUsdCompact(level))}`,
     '',
-    b(formatUsd(detail.priceUsd)),
-    esc(`Previous ${formatUsd(detail.previousUsd)}`),
+    ...card(appUrl, facts, snap),
   ];
-  return { text: lines.join('\n'), buttons: links(appUrl, facts.token, detail.poolId), preview: null };
+  return { text: lines.join('\n'), buttons: buttons(appUrl, facts, snap.poolId), preview: null };
+}
+
+export function athPost(appUrl: string, facts: TokenFacts, snap: Snapshot, previousUsd: number): Post {
+  const lines = [
+    `⛰️ ${a(`${appUrl}/token/${facts.token}`, facts.name)} · ${b('new high')}`,
+    esc(`${formatUsd(snap.priceUsd)}, was ${formatUsd(previousUsd)}`),
+    '',
+    ...card(appUrl, facts, snap),
+  ];
+  return { text: lines.join('\n'), buttons: buttons(appUrl, facts, snap.poolId), preview: null };
 }
 
 /**
@@ -197,21 +300,13 @@ export function digestPost(appUrl: string, summary: { launches: number; trades: 
   const parts: string[] = [];
   if (summary.launches > 0) parts.push(`${summary.launches} launch${summary.launches === 1 ? '' : 'es'}`);
   if (summary.trades > 0) parts.push(`${summary.trades} large trade${summary.trades === 1 ? '' : 's'}`);
-  const lines = [
-    `📊 ${b('While the channel was quiet')}`,
-    '',
-    esc(parts.join(' · ') || 'Nothing to report'),
-  ];
+  const lines = [`📊 ${b('While the channel was quiet')}`, '', esc(parts.join(' · ') || 'Nothing to report')];
   if (summary.tokens.length > 0) {
     const shown = summary.tokens.slice(0, 8).map((t) => `$${t}`).join(', ');
     const more = summary.tokens.length > 8 ? ` and ${summary.tokens.length - 8} more` : '';
     lines.push('', esc(shown + more));
   }
-  return {
-    text: lines.join('\n'),
-    buttons: [[{ text: '📊 Markets', url: `${appUrl}/markets` }]],
-    preview: null,
-  };
+  return { text: lines.join('\n'), buttons: [[{ text: '📊 Markets', url: `${appUrl}/markets` }]], preview: null };
 }
 
 /** Nothing this module builds should ever be able to exceed Telegram's limit; this is the proof. */

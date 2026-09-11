@@ -40,6 +40,9 @@ export function toMarket(row: MarketRow): Market {
   const priceUsd = priceInStock !== null && stockUsd !== null ? priceInStock * stockUsd : null;
   const stockUnit = 10 ** Number(row.stock_decimals);
   const volume24hStock = Number(row.volume_24h_stock_raw) / stockUnit;
+  // Both sides in stock terms, so a move in the stock's own USD price does not read as a move in
+  // the token.
+  const ago = row.price_24h_ago === null ? null : Number(row.price_24h_ago);
   return {
     token: row.token,
     name: row.name,
@@ -51,7 +54,7 @@ export function toMarket(row: MarketRow): Market {
     priceInStock,
     priceUsd,
     fdvUsd: priceUsd === null ? null : priceUsd * SUPPLY,
-    change24hPercent: null,
+    change24hPercent: priceInStock !== null && ago !== null && ago > 0 ? ((priceInStock - ago) / ago) * 100 : null,
     volume24hUsd: stockUsd === null ? null : volume24hStock * stockUsd,
     holders: Number(row.holder_count),
     trades: Number(row.trades_all),
@@ -95,7 +98,10 @@ export function judgeTrade(payload: TradePayload, market: Market, limits: Thresh
   const valueUsd = amountStock * stockUsd;
   if (!Number.isFinite(valueUsd) || valueUsd <= 0) return { post: false };
 
-  const dayVolume = market.volume24hUsd;
+  // The trade counts towards the day it is being compared against. Dividing by a window that
+  // happens to exclude it produces "350% of today's volume", which reads as a broken number
+  // rather than a big trade.
+  const dayVolume = market.volume24hUsd === null ? null : Math.max(market.volume24hUsd, valueUsd);
   const shareOfDay = dayVolume !== null && dayVolume > 0 ? valueUsd / dayVolume : null;
 
   const clearsFloor = valueUsd >= limits.minTradeUsd;

@@ -71,6 +71,13 @@ describe('which trades are worth everyone\'s attention', () => {
     }
   });
 
+  // "350% of today's volume" reads as a broken number, not a big trade.
+  it('never claims a trade was more than all of the volume it is part of', () => {
+    const verdict = judgeTrade(trade('500000000'), market({ volume24hUsd: 100 }), LIMITS);
+    expect(verdict.post).toBe(true);
+    if (verdict.post) expect(verdict.shareOfDay).toBeLessThanOrEqual(1);
+  });
+
   it('says nothing when it cannot price the trade', () => {
     expect(judgeTrade(trade('500000000', { stockUsd8: null }), market({ stockUsd: null }), LIMITS).post).toBe(false);
     expect(judgeTrade(trade('0'), market(), LIMITS).post).toBe(false);

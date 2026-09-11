@@ -1,11 +1,19 @@
 import {
+  BASE_CONTRACTS,
+} from '@stockpair/core';
+import {
+  holderConcentration,
+  listHolders,
   listPendingAlerts,
   markAlertsSent,
   readAlertMark,
   readMarket,
   setAlertMark,
+  tokenLifetime,
+  tokenPeakInStock,
   type AlertRow,
   type Db,
+  type MarketRow,
 } from '@stockpair/core/db';
 
 import type { AlertsConfig } from './config';
@@ -18,6 +26,7 @@ import {
   shortAddress,
   tradePost,
   type Post,
+  type Snapshot,
   type TokenFacts,
 } from './render';
 import type { Telegram } from './telegram';
@@ -74,8 +83,73 @@ async function basename(appUrl: string, address: string): Promise<string> {
   }
 }
 
-function facts(market: Market): TokenFacts {
-  return { token: market.token, name: market.name, symbol: market.symbol, stockSymbol: market.stockSymbol };
+const SUPPLY_RAW = 10n ** 27n;
+
+function facts(row: MarketRow, market: Market): TokenFacts {
+  return {
+    token: market.token,
+    name: market.name,
+    symbol: market.symbol,
+    stockSymbol: market.stockSymbol,
+    stockAddress: row.stock,
+  };
+}
+
+/**
+ * Everything a card shows, gathered in one place.
+ *
+ * Three extra queries per post, which is affordable because posts are rare by design — and the
+ * alternative is a card that says a price and nothing else, which is the difference between a
+ * channel people follow and one they scroll past.
+ */
+async function snapshot(
+  row: MarketRow,
+  market: Market,
+  deps: DispatchDeps,
+  name: (address: string) => Promise<string>,
+): Promise<Snapshot> {
+  const { db } = deps;
+  const life = await tokenLifetime(db, market.token);
+  const holders = await listHolders(db, market.token, 8);
+  const concentration = await holderConcentration(db, market.token, BASE_CONTRACTS.poolManager);
+  const peakInStock = await tokenPeakInStock(db, market.token);
+
+  // The pool custodies the locked supply and the burn address holds the launch dust; neither is a
+  // holder, and listing them as the top two would say nothing about distribution.
+  const skip = new Set([BASE_CONTRACTS.poolManager.toLowerCase(), '0x000000000000000000000000000000000000dead']);
+  const topHolders = holders
+    .filter((h) => !skip.has(h.holder.toLowerCase()))
+    .slice(0, 5)
+    .map((h) => ({ address: h.holder, sharePercent: (Number(h.balance_raw) / Number(SUPPLY_RAW)) * 100 }));
+
+  const circulating = Number(SUPPLY_RAW) - Number(concentration.pool_raw) - Number(concentration.burned_raw);
+  const topShare = circulating > 0 ? (Number(concentration.top10_raw) / circulating) * 100 : null;
+
+  // Priced at today's stock quote, because the peak is the token's own: it says how high this
+  // token ever went against NVDAc, not what NVDA was worth on the day it happened.
+  const peakUsd = peakInStock !== null && market.stockUsd !== null ? peakInStock * market.stockUsd * 1_000_000_000 : null;
+  // Equal to the current FDV it is not a fact, it is the same number twice.
+  const ath = peakUsd !== null && market.fdvUsd !== null && peakUsd >= market.fdvUsd * 1.05 ? peakUsd : null;
+
+  return {
+    priceUsd: market.priceUsd,
+    fdvUsd: market.fdvUsd,
+    athUsd: ath,
+    volume24hUsd: market.volume24hUsd,
+    change24hPercent: market.change24hPercent,
+    buys24h: Number(life.buys_24h),
+    sells24h: Number(life.sells_24h),
+    holders: market.holders,
+    topHolders,
+    topShare,
+    launchedAt: new Date(row.launched_at).toISOString(),
+    creator: row.creator,
+    creatorName: await name(row.creator),
+    website: row.profile_website ?? row.website,
+    twitter: row.profile_twitter ?? row.twitter,
+    telegram: row.profile_telegram,
+    poolId: market.poolId,
+  };
 }
 
 /**
@@ -94,14 +168,8 @@ async function consider(alert: AlertRow, deps: DispatchDeps, planning: Planning)
   const planned: Planned[] = [];
 
   if (alert.kind === 'launch') {
-    const creator = await name(row.creator);
-    return [
-      {
-        alertId: alert.id,
-        symbol: market.symbol,
-        post: launchPost(config.appUrl, facts(market), { creator, fdvUsd: market.fdvUsd, poolId: market.poolId }),
-      },
-    ];
+    const snap = await snapshot(row, market, deps, name);
+    return [{ alertId: alert.id, symbol: market.symbol, post: launchPost(config.appUrl, facts(row, market), snap) }];
   }
 
   if (alert.kind !== 'trade') return [];
@@ -109,22 +177,23 @@ async function consider(alert: AlertRow, deps: DispatchDeps, planning: Planning)
   if (!payload || (payload.side !== 'buy' && payload.side !== 'sell')) return [];
 
   const verdict = judgeTrade(payload, market, config);
-  if (verdict.post) {
-    const trader = payload.trader ? await name(payload.trader) : 'unknown wallet';
+  // Gather the card only when something is going to be posted: an ordinary trade is the common
+  // case and must not cost three queries to ignore.
+  const snap = verdict.post || nextMilestone(market.fdvUsd, 0) !== null ? await snapshot(row, market, deps, name) : null;
+  if (verdict.post && snap) {
     planned.push({
       alertId: alert.id,
       symbol: market.symbol,
-      post: tradePost(config.appUrl, facts(market), {
+      post: tradePost(config.appUrl, facts(row, market), snap, {
         side: payload.side,
         valueUsd: verdict.valueUsd,
         stepUsd: verdict.stepUsd,
         amountStock: verdict.amountStock,
         amountToken: verdict.amountToken,
-        trader,
+        trader: payload.trader,
+        traderName: payload.trader ? await name(payload.trader) : 'unknown wallet',
         shareOfDay: verdict.shareOfDay,
-        fdvUsd: market.fdvUsd,
-        change24h: market.change24hPercent,
-        poolId: market.poolId,
+        txHash: payload.txHash,
       }),
     });
   }
@@ -143,12 +212,7 @@ async function consider(alert: AlertRow, deps: DispatchDeps, planning: Planning)
     planned.push({
       alertId: alert.id,
       symbol: market.symbol,
-      post: milestonePost(config.appUrl, facts(market), {
-        level,
-        holders: market.holders,
-        trades: market.trades,
-        poolId: market.poolId,
-      }),
+      post: milestonePost(config.appUrl, facts(row, market), snap ?? (await snapshot(row, market, deps, name)), level),
       onSent: () => setAlertMark(db, alert.token, 'mcap', String(level)),
     });
   }
@@ -163,7 +227,7 @@ async function consider(alert: AlertRow, deps: DispatchDeps, planning: Planning)
       planned.push({
         alertId: alert.id,
         symbol: market.symbol,
-        post: athPost(config.appUrl, facts(market), { priceUsd: market.priceUsd, previousUsd: previous, poolId: market.poolId }),
+        post: athPost(config.appUrl, facts(row, market), snap ?? (await snapshot(row, market, deps, name)), previous),
       });
     }
   }

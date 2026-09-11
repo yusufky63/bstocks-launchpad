@@ -690,6 +690,22 @@ export async function rollbackFrom(db: Db, fromBlock: bigint) {
   }
 }
 
+/**
+ * The highest the token has ever traded, in stock terms.
+ *
+ * Candles already hold a per-minute high, so this is one aggregate rather than a scan of every
+ * swap. It is deliberately in stock terms and not USD: the pair is the token against the stock, so
+ * a peak measured this way is the token's own, unmoved by what NVDA did that week.
+ */
+export async function tokenPeakInStock(db: Db, token: string): Promise<number | null> {
+  const [row] = await db.query<{ high: string | null }>(
+    'SELECT max(high)::text AS high FROM candles WHERE token = $1',
+    [token.toLowerCase()],
+  );
+  const high = row?.high === null || row?.high === undefined ? null : Number(row.high);
+  return high !== null && Number.isFinite(high) && high > 0 ? high : null;
+}
+
 // ---------------------------------------------------------------------------------------------
 // Alert outbox
 //

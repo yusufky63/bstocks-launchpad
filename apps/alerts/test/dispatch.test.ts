@@ -111,8 +111,11 @@ describe('a dispatch pass', () => {
 
     const result = await dispatchOnce(deps());
     expect(result).toMatchObject({ considered: 1, posted: 1, collapsed: false, deferred: 0 });
-    expect(telegram.sent[0]?.text).toContain('New launch');
+    expect(telegram.sent[0]?.text).toContain('🆕');
     expect(telegram.sent[0]?.text).toContain('StockPair');
+    // The card the post carries, not just the headline.
+    expect(telegram.sent[0]?.text).toContain('holders');
+    expect(telegram.sent[0]?.text).toContain('>NVDAc</a>');
     expect(await listPendingAlerts(db)).toHaveLength(0);
   });
 
@@ -121,7 +124,7 @@ describe('a dispatch pass', () => {
 
     const result = await dispatchOnce(deps());
     expect(result.considered).toBe(2);
-    expect(telegram.sent.filter((s) => s.text.includes('large buy'))).toHaveLength(1);
+    expect(telegram.sent.filter((s) => s.text.includes('BUY'))).toHaveLength(1);
     // Both rows are dealt with: "sent" means considered, not necessarily posted.
     expect(await listPendingAlerts(db)).toHaveLength(0);
   });
@@ -165,7 +168,7 @@ describe('a dispatch pass', () => {
     expect(result.deferred).toBe(0);
     // The refused post is gone; everything behind it still went out, and the level is announced
     // exactly once even though two trades in this batch both crossed it.
-    expect(telegram.sent.filter((s) => s.text.includes('large buy'))).toHaveLength(1);
+    expect(telegram.sent.filter((s) => s.text.includes('BUY'))).toHaveLength(1);
     expect(telegram.sent.filter((s) => s.text.includes('passed'))).toHaveLength(1);
     expect(await listPendingAlerts(db)).toHaveLength(0);
   });
