@@ -111,10 +111,17 @@ export function judgeTrade(payload: TradePayload, market: Market, limits: Thresh
     shareOfDay !== null && shareOfDay >= limits.minTradeShare && valueUsd >= limits.minTradeFloorUsd;
   if (!clearsFloor && !clearsShare) return { post: false };
 
-  // One bar means the same thing on a quiet token as on a busy one: the step is whichever
-  // threshold this trade actually cleared, divided into six.
-  const basis = clearsFloor ? limits.minTradeUsd : (dayVolume ?? limits.minTradeUsd) * limits.minTradeShare;
-  const stepUsd = Math.max(basis / 6, 1);
+  // The bar is drawn against the bar this trade had to clear, so one length means the same thing
+  // on a quiet token as on a busy one.
+  //
+  // The share gate is whichever of its two halves actually bound. Using the percentage alone put
+  // every trade at the cap: with a $167 day the share basis is $25, and a $108 trade is 26 steps
+  // of it — so $108 and $475 drew identical bars.
+  const shareBasis = Math.max(limits.minTradeFloorUsd, (dayVolume ?? 0) * limits.minTradeShare);
+  const basis = clearsFloor ? limits.minTradeUsd : shareBasis;
+  // Thirds rather than sixths: a trade at the threshold gets a stub, and the cap is nearly seven
+  // times it, which covers the range these tokens actually trade in.
+  const stepUsd = Math.max(basis / 3, 1);
   return { post: true, valueUsd, stepUsd, amountStock, amountToken, shareOfDay };
 }
 

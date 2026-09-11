@@ -79,9 +79,21 @@ describe('which trades are worth everyone\'s attention', () => {
     expect(loud.post && quiet.post).toBe(true);
     if (loud.post && quiet.post) {
       // Both draw a readable bar rather than one drawing a single emoji and the other a wall.
-      expect(Math.floor(loud.valueUsd / loud.stepUsd)).toBeGreaterThanOrEqual(6);
-      expect(Math.floor(quiet.valueUsd / quiet.stepUsd)).toBeGreaterThanOrEqual(6);
+      expect(Math.floor(loud.valueUsd / loud.stepUsd)).toBeGreaterThanOrEqual(3);
+      expect(Math.floor(quiet.valueUsd / quiet.stepUsd)).toBeGreaterThanOrEqual(3);
     }
+  });
+
+  // Ten real trades between $108 and $475 all drew a full twenty, because the step came from the
+  // percentage alone and a $167 day makes that $25.
+  it('draws different bars for trades that are different sizes', () => {
+    const day = market({ volume24hUsd: 167 });
+    const lengths = ['50000000', '100000000', '211000000'].map((raw) => {
+      const v = judgeTrade(trade(raw), day, LIMITS);
+      return v.post ? Math.min(20, Math.max(1, Math.floor(v.valueUsd / v.stepUsd))) : 0;
+    });
+    expect(new Set(lengths).size).toBe(lengths.length);
+    expect(lengths[0]).toBeLessThan(lengths[2]!);
   });
 
   // "350% of today's volume" reads as a broken number, not a big trade.
