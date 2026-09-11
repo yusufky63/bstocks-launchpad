@@ -11,7 +11,9 @@ import {
   type RawLog,
 } from '@stockpair/core';
 import {
+  countPendingAlerts,
   createEmbeddedDb,
+  listPendingAlerts,
   listStocks,
   listCandles,
   listHolders,
@@ -305,6 +307,58 @@ describe('syncOnce', () => {
     // 30 blocks and 30 transactions, all in flight at once rather than 60 sequential waits.
     expect(chain.peak.block).toBeGreaterThanOrEqual(30);
     expect(chain.peak.sender).toBe(30);
+  });
+});
+
+describe('what the sync queued for the channel', () => {
+  // The outbox is written inside syncOnce's own transaction by the real decoder, so this is the
+  // only place the shape it produces is checked against the shape the alerts service reads.
+  it('queued one row per launch and per swap, keyed so a replay cannot duplicate them', async () => {
+    const rows = await listPendingAlerts(db, 200);
+    expect(rows.length).toBe(await countPendingAlerts(db));
+
+    const launches = rows.filter((r) => r.kind === 'launch');
+    expect(launches).toHaveLength(1);
+    expect(launches[0]?.token).toBe(TOKEN.toLowerCase());
+
+    const trades = rows.filter((r) => r.kind === 'trade');
+    // The buy, the sell that came back after the reorg, and the thirty from the busy range.
+    expect(trades).toHaveLength(32);
+
+    // A key on every row, and no two the same: this is what stops a reorged-and-reindexed swap
+    // being announced twice.
+    const keys = await db.query<{ dedupe_key: string | null }>('SELECT dedupe_key FROM alert_outbox');
+    expect(keys.every((k) => typeof k.dedupe_key === 'string' && k.dedupe_key.length > 0)).toBe(true);
+    expect(new Set(keys.map((k) => k.dedupe_key)).size).toBe(keys.length);
+  });
+
+  it('snapshotted everything the alerts service needs to render, and nothing it has to re-read', async () => {
+    const rows = await listPendingAlerts(db, 200);
+    const buy = rows.find((r) => r.kind === 'trade' && (r.payload as { side: string }).side === 'buy');
+    expect(buy).toBeDefined();
+    const payload = buy!.payload as Record<string, unknown>;
+
+    expect(payload).toMatchObject({
+      side: 'buy',
+      amountStockRaw: '99000000',
+      amountTokenRaw: (10n ** 24n).toString(),
+      trader: TRADER,
+      stockDecimals: 8,
+    });
+    expect(typeof payload.txHash).toBe('string');
+    expect(typeof payload.blockTime).toBe('string');
+    // The stock's USD price as it stood when the trade was committed. A post has to say what the
+    // trade was worth then, not when the dispatcher gets to it.
+    expect(payload.stockUsd8 === null || typeof payload.stockUsd8 === 'string').toBe(true);
+  });
+
+  // Replaying a range is ordinary: it is what the indexer does after every reorg.
+  it('queues nothing new when the same range is indexed again', async () => {
+    const before = await countPendingAlerts(db);
+    chain.hashSalt.set(1_064n, 'reorged-again');
+    await sync();
+    await sync();
+    expect(await countPendingAlerts(db)).toBe(before);
   });
 });
 
