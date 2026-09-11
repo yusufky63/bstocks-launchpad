@@ -148,9 +148,17 @@ describe('a trade post', () => {
     const text = tradePost(APP, FACTS, snap(), TRADE).text;
     expect(text).toContain('>Web</a>');
     expect(text).toContain('>X</a>');
-    expect(text).toContain('>Chart</a>');
+    expect(text).toContain('>DexScreener</a>');
+    expect(text).toContain('>Gecko</a>');
     expect(text).toContain('https://x.com/xBaseStocks');
     expect(text).toContain('dexscreener.com/base/');
+    expect(text).toContain('geckoterminal.com/base/pools/');
+  });
+
+  // Two chart sites, neither of them promoted over the other by a button.
+  it('keeps the buttons to what only this site can do', () => {
+    const labels = tradePost(APP, FACTS, snap(), TRADE).buttons.flat().map((btn) => btn.text);
+    expect(labels).toEqual(['💱 Trade', '👥 Holders']);
   });
 
   it('drops a link the creator never gave rather than showing a dead one', () => {

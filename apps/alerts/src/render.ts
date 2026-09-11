@@ -162,11 +162,11 @@ export type Snapshot = {
   poolId: string;
 };
 
-export function buttons(appUrl: string, facts: TokenFacts, poolId: string): InlineButton[][] {
+/** Both chart sites are in the text row; a button for one of them would just pick a favourite. */
+export function buttons(appUrl: string, facts: TokenFacts): InlineButton[][] {
   return [
     [
       { text: '💱 Trade', url: `${appUrl}/token/${facts.token}` },
-      { text: '📊 Chart', url: `https://dexscreener.com/base/${poolId}` },
       { text: '👥 Holders', url: `${appUrl}/token/${facts.token}?tab=holders` },
     ],
   ];
@@ -208,7 +208,9 @@ function card(appUrl: string, facts: TokenFacts, snap: Snapshot): string[] {
     a(snap.website, 'Web'),
     a(snap.twitter, 'X'),
     a(snap.telegram, 'TG'),
-    a(`https://dexscreener.com/base/${snap.poolId}`, 'Chart'),
+    a(`https://dexscreener.com/base/${snap.poolId}`, 'DexScreener'),
+    // GeckoTerminal indexes v4 pools under the same pool id, verified against its own API.
+    a(`https://www.geckoterminal.com/base/pools/${snap.poolId}`, 'Gecko'),
     a(`${appUrl}/token/${facts.token}`, 'Token'),
   ].filter((t) => t.startsWith('<a'));
   if (tools.length > 0) lines.push(`🔗 ${tools.join(' · ')}`);
@@ -254,7 +256,7 @@ export function tradePost(
   );
   lines.push('');
   lines.push(...card(appUrl, facts, snap));
-  return { text: lines.join('\n'), buttons: buttons(appUrl, facts, snap.poolId), preview: null };
+  return { text: lines.join('\n'), buttons: buttons(appUrl, facts), preview: null };
 }
 
 export function launchPost(appUrl: string, facts: TokenFacts, snap: Snapshot): Post {
@@ -266,7 +268,7 @@ export function launchPost(appUrl: string, facts: TokenFacts, snap: Snapshot): P
   ];
   return {
     text: lines.join('\n'),
-    buttons: buttons(appUrl, facts, snap.poolId),
+    buttons: buttons(appUrl, facts),
     // The token page renders its own share card, which is a better image than anything this
     // service could assemble and costs nothing to reference.
     preview: `${appUrl}/token/${facts.token}`,
@@ -279,7 +281,7 @@ export function milestonePost(appUrl: string, facts: TokenFacts, snap: Snapshot,
     '',
     ...card(appUrl, facts, snap),
   ];
-  return { text: lines.join('\n'), buttons: buttons(appUrl, facts, snap.poolId), preview: null };
+  return { text: lines.join('\n'), buttons: buttons(appUrl, facts), preview: null };
 }
 
 export function athPost(appUrl: string, facts: TokenFacts, snap: Snapshot, previousUsd: number): Post {
@@ -289,7 +291,7 @@ export function athPost(appUrl: string, facts: TokenFacts, snap: Snapshot, previ
     '',
     ...card(appUrl, facts, snap),
   ];
-  return { text: lines.join('\n'), buttons: buttons(appUrl, facts, snap.poolId), preview: null };
+  return { text: lines.join('\n'), buttons: buttons(appUrl, facts), preview: null };
 }
 
 /**
