@@ -27,14 +27,40 @@ type ApiError = {
 
 export type SendResult = { ok: true; messageId: number } | { ok: false; retriable: boolean; reason: string };
 
+/**
+ * Telegram documents one message per second into a single chat, twenty per minute into a group,
+ * and about thirty per second overall. It does not say which of those a channel is, so this takes
+ * the stricter reading and leaves headroom on top.
+ *
+ * Waiting is cheaper than a 429: the retry costs a round trip, the `retry_after` it comes back
+ * with is measured in seconds rather than milliseconds, and a second 429 stalls everything behind
+ * it in the queue.
+ */
+const MIN_GAP_MS = 1_200;
+
 export class Telegram {
+  private lastSentAt = new Map<string, number>();
+
   constructor(
     private readonly token: string,
     private readonly fetchImpl: typeof fetch = fetch,
     private readonly sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+    private readonly now: () => number = () => Date.now(),
   ) {}
 
+  /** Holds back until this chat's last message is far enough behind. */
+  private async pace(chatId: string): Promise<void> {
+    const last = this.lastSentAt.get(chatId);
+    if (last !== undefined) {
+      const wait = MIN_GAP_MS - (this.now() - last);
+      if (wait > 0) await this.sleep(wait);
+    }
+    this.lastSentAt.set(chatId, this.now());
+  }
+
   async sendMessage(chatId: string, text: string, options: SendOptions = {}, attempt = 0): Promise<SendResult> {
+    // Only on the first try. A retry has already waited out the retry_after Telegram asked for.
+    if (attempt === 0) await this.pace(chatId);
     const body: Record<string, unknown> = {
       chat_id: chatId,
       text: text.slice(0, TEXT_LIMIT),
