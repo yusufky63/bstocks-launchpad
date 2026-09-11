@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  a,
   age,
   bar,
   esc,
@@ -10,6 +11,7 @@ import {
   formatUsdCompact,
   launchPost,
   tradePost,
+  trim,
   type Snapshot,
   type TokenFacts,
 } from '../src/render';
@@ -86,6 +88,48 @@ describe('escaping', () => {
     // Every tag left is one this module opened and closed itself.
     const tags = [...post.text.matchAll(/<(\/?)([a-z]+)/gu)].map((m) => `${m[1]}${m[2]}`);
     expect(tags.filter((t) => t.startsWith('/')).length).toBe(tags.filter((t) => !t.startsWith('/')).length);
+  });
+});
+
+describe('hostile links', () => {
+  // A creator's website only has to match /^https?:\/\/\S+$/ to be stored, and a quote is not
+  // whitespace. Unescaped it closed the href and opened a second, attacker-chosen link.
+  it('escapes the quote that would close an href', () => {
+    expect(esc('a"b')).toBe('a&quot;b');
+    const out = a('https://evil.test/"><a href="https://phish.test', 'Web');
+    expect(out).not.toContain('phish.test');
+    expect(out).toBe('Web');
+  });
+
+  it('leaves the apostrophe alone, since every attribute here is double-quoted', () => {
+    expect(esc("today's")).toBe("today's");
+  });
+
+  it('refuses a URL carrying whitespace, brackets or anything below a space', () => {
+    for (const bad of ['https://x.test/a b', 'https://x.test/<b>', `https://x.test/${String.fromCodePoint(10)}x`]) {
+      expect(a(bad, 'Web')).toBe('Web');
+    }
+    expect(a(`https://x.test/${'a'.repeat(500)}`, 'Web')).toBe('Web');
+  });
+
+  it('still links an ordinary URL', () => {
+    expect(a('https://good.test/p?a=1&b=2', 'Web')).toBe('<a href="https://good.test/p?a=1&amp;b=2">Web</a>');
+  });
+});
+
+describe('trimming', () => {
+  // The transport used to slice() to 4096, which cuts through a tag and turns a long post into a
+  // 400 and a silent loss.
+  it('drops whole lines rather than cutting through a tag', () => {
+    const long = { text: ['<b>head</b>', ...Array.from({ length: 400 }, (_, i) => `<b>line ${i}</b>`)].join('\n'), buttons: [] };
+    const out = trim(long);
+    expect(out.text.length).toBeLessThanOrEqual(TEXT_LIMIT);
+    expect(out.text.split('\n').every((l) => !l.includes('<b>') || l.includes('</b>'))).toBe(true);
+  });
+
+  it('leaves a post that already fits exactly as it was', () => {
+    const post = tradePost(APP, FACTS, snap(), TRADE);
+    expect(trim(post)).toEqual(post);
   });
 });
 
@@ -179,6 +223,19 @@ describe('a trade post', () => {
 
   it('puts the address in a code block, which is tap-to-copy', () => {
     expect(tradePost(APP, FACTS, snap(), TRADE).text).toContain(`<code>${FACTS.token}</code>`);
+  });
+
+  // A buy that carries a token past a level is one event, not two notifications — and a row that
+  // can only produce one post cannot re-send a post that already went out.
+  it('says the milestone on the trade card rather than in a second post', () => {
+    const post = tradePost(APP, FACTS, snap(), { ...TRADE, milestone: 25_000 });
+    expect(post.text).toContain('Carried it past $25K');
+    expect(post.text).toContain('BUY');
+  });
+
+  it('says a new high the same way', () => {
+    const post = tradePost(APP, FACTS, snap(), { ...TRADE, newHighFrom: 9_800 });
+    expect(post.text).toContain('New high, beating $9.8K');
   });
 
   it('turns red for a sell', () => {

@@ -18,6 +18,7 @@ const INDEXES = [
   'fee_claims_account_idx',
   'alert_outbox_pending_idx',
   'alert_outbox_block_idx',
+  'alert_outbox_dedupe_idx',
 ];
 
 async function indexNames(db: Awaited<ReturnType<typeof createEmbeddedDb>>): Promise<Set<string>> {

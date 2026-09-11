@@ -248,3 +248,11 @@ CREATE TABLE IF NOT EXISTS alert_marks (
 
 CREATE INDEX IF NOT EXISTS alert_outbox_pending_idx ON alert_outbox (id) WHERE sent_at IS NULL;
 CREATE INDEX IF NOT EXISTS alert_outbox_block_idx ON alert_outbox (block_number);
+
+-- Version 7: one announcement per event, ever.
+--
+-- A reorg deletes a swap and the next pass re-indexes it; insertSwaps is keyed on (tx_hash,
+-- log_index) so the swap itself lands once, but the outbox had no such key and queued it twice.
+-- The row already sent keeps its key, so the second attempt is refused rather than announced.
+ALTER TABLE alert_outbox ADD COLUMN IF NOT EXISTS dedupe_key text;
+CREATE UNIQUE INDEX IF NOT EXISTS alert_outbox_dedupe_idx ON alert_outbox (dedupe_key) WHERE dedupe_key IS NOT NULL;

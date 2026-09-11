@@ -25,6 +25,7 @@ import {
   milestonePost,
   shortAddress,
   tradePost,
+  trim,
   type Post,
   type Snapshot,
   type TokenFacts,
@@ -63,7 +64,7 @@ type Planned = { post: Post; alertId: string; symbol: string; onSent?: () => Pro
  * in one batch would both look at a mark of zero and both plan the same "passed $10K". This is the
  * memory between them.
  */
-type Planning = { mcap: Map<string, number> };
+type Planning = { mcap: Map<string, number>; ath: Map<string, number> };
 
 /**
  * Turns a wallet into whatever a person would recognise it as.
@@ -84,6 +85,11 @@ async function basename(appUrl: string, address: string): Promise<string> {
 }
 
 const SUPPLY_RAW = 10n ** 27n;
+
+/** What is actually held: the fixed supply less the pool's locked position and the launch dust. */
+function circulatingOf(c: { pool_raw: string; burned_raw: string }): number {
+  return Number(SUPPLY_RAW) - Number(c.pool_raw) - Number(c.burned_raw);
+}
 
 function facts(row: MarketRow, market: Market): TokenFacts {
   return {
@@ -120,8 +126,11 @@ async function snapshot(
   const topHolders = holders
     .filter((h) => !skip.has(h.holder.toLowerCase()))
     .slice(0, 5)
-    .map((h) => ({ address: h.holder, sharePercent: (Number(h.balance_raw) / Number(SUPPLY_RAW)) * 100 }));
+    .map((h) => ({ address: h.holder, sharePercent: circulatingOf(concentration) > 0 ? (Number(h.balance_raw) / circulatingOf(concentration)) * 100 : 0 }));
 
+  // Everything on this line is a share of what is actually held, not of the fixed billion. Most of
+  // the supply sits in the pool, so against the billion every holder reads as a fraction of a
+  // percent while the concentration figure beside them reads as 62% — two denominators, one line.
   const circulating = Number(SUPPLY_RAW) - Number(concentration.pool_raw) - Number(concentration.burned_raw);
   const topShare = circulating > 0 ? (Number(concentration.top10_raw) / circulating) * 100 : null;
 
@@ -153,37 +162,73 @@ async function snapshot(
 }
 
 /**
- * Decides what one queued row is worth saying, if anything.
+ * Decides what one queued row is worth saying, if anything. At most one post.
  *
- * A trade can produce two posts: a buy that crosses a market cap level is both a large trade and a
- * milestone, and the milestone is the part people forward.
+ * It used to return several — a trade card, and a milestone card, and a high card, all carrying the
+ * same row id. When a later one failed the row went back to the queue whole, and the next pass
+ * re-sent the card that had already reached the channel. Nothing recorded which of a row's posts
+ * had gone out, and a per-row `sent_at` cannot record it.
+ *
+ * One post per row removes that class of bug rather than patching it, and it is better reading
+ * anyway: a buy that carries a token past $25K is one event, not two notifications.
  */
-async function consider(alert: AlertRow, deps: DispatchDeps, planning: Planning): Promise<Planned[]> {
+async function consider(alert: AlertRow, deps: DispatchDeps, planning: Planning): Promise<Planned | null> {
   const { db, config } = deps;
   const name = deps.resolveName ?? ((address: string) => basename(config.appUrl, address));
   const row = await readMarket(db, alert.token);
   // A launch whose row has gone is a launch that was reorged away between queueing and now.
-  if (!row) return [];
+  if (!row) return null;
   const market = toMarket(row);
-  const planned: Planned[] = [];
 
   if (alert.kind === 'launch') {
     const snap = await snapshot(row, market, deps, name);
-    return [{ alertId: alert.id, symbol: market.symbol, post: launchPost(config.appUrl, facts(row, market), snap) }];
+    return { alertId: alert.id, symbol: market.symbol, post: launchPost(config.appUrl, facts(row, market), snap) };
   }
 
-  if (alert.kind !== 'trade') return [];
+  if (alert.kind !== 'trade') return null;
   const payload = alert.payload as TradePayload | null;
-  if (!payload || (payload.side !== 'buy' && payload.side !== 'sell')) return [];
+  if (!payload || (payload.side !== 'buy' && payload.side !== 'sell')) return null;
 
   const verdict = judgeTrade(payload, market, config);
-  // Gather the card only when something is going to be posted: an ordinary trade is the common
-  // case and must not cost three queries to ignore.
-  const snap = verdict.post || nextMilestone(market.fdvUsd, 0) !== null ? await snapshot(row, market, deps, name) : null;
-  if (verdict.post && snap) {
-    planned.push({
+
+  // Both marks are read before the expensive part, because whether a card is worth gathering
+  // depends on them. Reading the mcap mark as zero here made the gate true for every token over
+  // $10K, which is every token worth alerting about — so the gate never saved a query.
+  const mcapMark = await readAlertMark(db, alert.token, 'mcap');
+  const announced = Math.max(Number(mcapMark?.value ?? 0), planning.mcap.get(alert.token) ?? 0);
+  const level = nextMilestone(market.fdvUsd, announced);
+
+  // In stock terms, not dollars. The pair is the token against the stock, so a high measured in
+  // USD announces "new high" on a day NVDA moved and the token did not.
+  const athMark = await readAlertMark(db, alert.token, 'ath');
+  const previousInStock = Math.max(Number(athMark?.value ?? 0), planning.ath.get(alert.token) ?? 0);
+  const priceInStock = market.priceInStock;
+  const newHigh = priceInStock !== null && previousInStock > 0 && isNewHigh(priceInStock, previousInStock);
+  const raisesHigh = priceInStock !== null && priceInStock > previousInStock;
+
+  if (!verdict.post && level === null && !newHigh) return null;
+
+  if (level !== null) planning.mcap.set(alert.token, level);
+  if (raisesHigh) planning.ath.set(alert.token, priceInStock);
+
+  // Neither mark is written until the post is out. A level recorded before the send is skipped on
+  // the retry, and a milestone announced to nobody cannot be caught up later.
+  const onSent = async () => {
+    if (level !== null) await setAlertMark(db, alert.token, 'mcap', String(level));
+    if (raisesHigh) await setAlertMark(db, alert.token, 'ath', String(priceInStock));
+  };
+
+  const snap = await snapshot(row, market, deps, name);
+  const extras = {
+    milestone: level,
+    newHighFrom: newHigh && priceInStock !== null ? previousInStock * (market.stockUsd ?? 0) * 1_000_000_000 : null,
+  };
+
+  if (verdict.post) {
+    return {
       alertId: alert.id,
       symbol: market.symbol,
+      onSent,
       post: tradePost(config.appUrl, facts(row, market), snap, {
         side: payload.side,
         valueUsd: verdict.valueUsd,
@@ -194,45 +239,27 @@ async function consider(alert: AlertRow, deps: DispatchDeps, planning: Planning)
         traderName: payload.trader ? await name(payload.trader) : 'unknown wallet',
         shareOfDay: verdict.shareOfDay,
         txHash: payload.txHash,
+        ...extras,
       }),
-    });
+    };
   }
 
-  // Milestones ride on trades because a market cap only moves when somebody trades. Checking here
-  // rather than on a timer means no separate sweep over every token that ever launched.
-  //
-  // The mark is written in onSent, not now: a level recorded before the post goes out would be
-  // skipped on the retry, and a milestone announced to nobody is the one kind of alert that cannot
-  // be caught up later.
-  const mcapMark = await readAlertMark(db, alert.token, 'mcap');
-  const announced = Math.max(Number(mcapMark?.value ?? 0), planning.mcap.get(alert.token) ?? 0);
-  const level = nextMilestone(market.fdvUsd, announced);
+  // A trade too small to announce can still carry a token past a level, and that is news even
+  // though the trade is not.
   if (level !== null) {
-    planning.mcap.set(alert.token, level);
-    planned.push({
+    return {
       alertId: alert.id,
       symbol: market.symbol,
-      post: milestonePost(config.appUrl, facts(row, market), snap ?? (await snapshot(row, market, deps, name)), level),
-      onSent: () => setAlertMark(db, alert.token, 'mcap', String(level)),
-    });
+      onSent,
+      post: milestonePost(config.appUrl, facts(row, market), snap, level),
+    };
   }
-
-  // The high-water mark moves whether or not it is announced — it is a record of the price, not of
-  // a message. Only a gain worth reading about becomes a post.
-  const athMark = await readAlertMark(db, alert.token, 'ath');
-  const previous = Number(athMark?.value ?? 0);
-  if (market.priceUsd !== null && market.priceUsd > previous) {
-    await setAlertMark(db, alert.token, 'ath', String(market.priceUsd));
-    if (previous > 0 && isNewHigh(market.priceUsd, previous)) {
-      planned.push({
-        alertId: alert.id,
-        symbol: market.symbol,
-        post: athPost(config.appUrl, facts(row, market), snap ?? (await snapshot(row, market, deps, name)), previous),
-      });
-    }
-  }
-
-  return planned;
+  return {
+    alertId: alert.id,
+    symbol: market.symbol,
+    onSent,
+    post: athPost(config.appUrl, facts(row, market), snap, extras.newHighFrom ?? 0),
+  };
 }
 
 /**
@@ -249,16 +276,21 @@ export async function dispatchOnce(deps: DispatchDeps): Promise<DispatchResult> 
 
   const queued: Planned[] = [];
   const silent: string[] = [];
-  const planning: Planning = { mcap: new Map() };
+  let stuck = 0;
+  const planning: Planning = { mcap: new Map(), ath: new Map() };
   for (const alert of pending) {
-    let planned: Planned[] = [];
     try {
-      planned = await consider(alert, deps, planning);
+      const planned = await consider(alert, deps, planning);
+      if (planned) queued.push(planned);
+      else silent.push(alert.id);
     } catch (error) {
-      log('alert skipped', { id: alert.id, error: error instanceof Error ? error.message : String(error) });
+      // Left pending rather than marked sent. Deciding reads the database, and a read that failed
+      // once will usually succeed on the next pass; marking it dealt with would throw the alert
+      // away for a reason that had nothing to do with it. The loop continues, so a row that fails
+      // every time is noisy in the log rather than a blockage.
+      stuck += 1;
+      log('alert deferred', { id: alert.id, error: error instanceof Error ? error.message : String(error) });
     }
-    if (planned.length === 0) silent.push(alert.id);
-    else queued.push(...planned);
   }
   await markAlertsSent(db, silent);
 
@@ -266,54 +298,51 @@ export async function dispatchOnce(deps: DispatchDeps): Promise<DispatchResult> 
   // its poll sleep while catching up. Replaying that one message at a time is how a channel gets
   // muted; one post says the same thing.
   if (queued.length > config.backlogLimit) {
-    const launches = pending.filter((a) => a.kind === 'launch').length;
+    const launches = queued.filter((item) => item.post.preview !== null && item.post.preview !== undefined).length;
     const summary = digestPost(config.appUrl, {
       launches,
       trades: queued.length - launches,
-      // Which tokens, not just how many things happened: a count alone tells a reader nothing
-      // about whether it is worth scrolling back.
       tokens: [...new Set(queued.map((item) => item.symbol))],
     });
     const sent = await send(summary, deps);
-    if (sent) {
+    // Tri-state, not truthiness. A digest Telegram will never accept used to mark nothing, so the
+    // same batch was rebuilt and refused on every pass for ever; only a retriable failure should
+    // leave the rows pending.
+    if (sent !== null) {
       await markAlertsSent(db, pending.map((a) => a.id));
-      for (const item of queued) await item.onSent?.();
+      if (sent) for (const item of queued) await item.onSent?.();
     }
     return {
       considered: pending.length,
       posted: sent ? 1 : 0,
       skipped: silent.length,
       collapsed: true,
-      deferred: sent ? 0 : queued.length,
+      deferred: sent === null ? queued.length : stuck,
     };
   }
 
   let posted = 0;
-  const done = new Set<string>();
-  const failed = new Set<string>();
+  let done = 0;
   for (const item of queued) {
-    // Everything else this row wanted to say is already deferred; do not post half of it.
-    if (failed.has(item.alertId)) continue;
     const sent = await send(item.post, deps);
-    if (sent === null) {
-      failed.add(item.alertId);
-      continue;
-    }
+    // Retriable: stop the pass. Everything after this is still pending and the order in the
+    // channel is the order it happened, which a partial pass would break.
+    if (sent === null) break;
     if (sent) {
       posted += 1;
       await item.onSent?.();
     }
-    done.add(item.alertId);
+    // One row at a time, immediately. Batching this to the end of the pass meant a crash or a
+    // SIGTERM after the eighth of ten posts re-sent all eight on the next start.
+    await markAlertsSent(db, [item.alertId]);
+    done += 1;
   }
-  // A row that failed anywhere stays pending in full, so its unsent posts get another chance.
-  for (const id of failed) done.delete(id);
-  await markAlertsSent(db, [...done]);
   return {
     considered: pending.length,
     posted,
     skipped: silent.length,
     collapsed: false,
-    deferred: failed.size,
+    deferred: queued.length - done + stuck,
   };
 }
 
@@ -324,9 +353,11 @@ async function send(post: Post, deps: DispatchDeps): Promise<boolean | null> {
     log('would post', { text: post.text });
     return true;
   }
-  const result = await telegram.sendMessage(config.channelId, post.text, {
-    buttons: post.buttons,
-    preview: post.preview,
+  // Every post leaves through here, so this is the one place the length has to hold.
+  const safe = trim(post);
+  const result = await telegram.sendMessage(config.channelId, safe.text, {
+    buttons: safe.buttons,
+    preview: safe.preview,
   });
   if (result.ok) return true;
   log('post failed', { reason: result.reason, retriable: result.retriable });

@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
 import process from 'node:process';
 
-import { createPostgresDb, pruneSentAlerts } from '@stockpair/core/db';
+import { createPostgresDb, pruneAlerts } from '@stockpair/core/db';
 
 import { loadConfig, loadEnvFiles } from './config';
 import { dispatchOnce } from './dispatch';
@@ -68,7 +68,7 @@ async function main(): Promise<void> {
 
       if (started - lastPruneAt > PRUNE_INTERVAL_MS) {
         lastPruneAt = started;
-        const pruned = await pruneSentAlerts(db);
+        const pruned = await pruneAlerts(db);
         if (pruned > 0) log('pruned', { rows: pruned });
       }
     } catch (error) {

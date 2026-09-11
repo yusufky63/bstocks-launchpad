@@ -8,7 +8,7 @@ import {
   insertLaunch,
   listPendingAlerts,
   markAlertsSent,
-  pruneSentAlerts,
+  pruneAlerts,
   readAlertMark,
   rollbackFrom,
   setAlertMark,
@@ -75,6 +75,27 @@ describe('the alert outbox', () => {
     expect(await countPendingAlerts(db)).toBe(1);
   });
 
+  // A reorg deletes a swap and the next pass re-indexes it. The swap itself lands once because
+  // insertSwaps is keyed on (tx_hash, log_index); without the same key here the announcement went
+  // out twice.
+  it('refuses to queue the same event twice, even after it has been sent', async () => {
+    const one = { kind: 'trade' as const, token: TOKEN, blockNumber: 50_900_011n, payload: { n: 1 }, dedupeKey: 'trade:0xabc:3' };
+    await enqueueAlerts(db, [one]);
+    await enqueueAlerts(db, [one]);
+    expect(await countPendingAlerts(db)).toBe(1);
+
+    const [first] = await listPendingAlerts(db);
+    await markAlertsSent(db, [first!.id]);
+    await enqueueAlerts(db, [one]);
+    expect(await countPendingAlerts(db)).toBe(0);
+  });
+
+  it('still queues everything when no key is given', async () => {
+    const anon = { kind: 'trade' as const, token: TOKEN, blockNumber: 50_900_011n, payload: { n: 1 } };
+    await enqueueAlerts(db, [anon, anon]);
+    expect(await countPendingAlerts(db)).toBe(2);
+  });
+
   it('stops handing back what has been sent', async () => {
     await enqueueAlerts(db, [
       { kind: 'trade', token: TOKEN, blockNumber: 50_900_011n, payload: { n: 1 } },
@@ -108,7 +129,7 @@ describe('the alert outbox', () => {
     expect(Number(rows[0]!.count)).toBe(2);
   });
 
-  it('prunes sent rows once they are old, and never pending ones', async () => {
+  it('prunes sent rows once they are old, and stale unsent ones too', async () => {
     await enqueueAlerts(db, [
       { kind: 'trade', token: TOKEN, blockNumber: 50_900_011n, payload: { n: 1 } },
       { kind: 'trade', token: TOKEN, blockNumber: 50_900_012n, payload: { n: 2 } },
@@ -117,9 +138,23 @@ describe('the alert outbox', () => {
     await markAlertsSent(db, all.map((a) => a.id));
     await db.query("UPDATE alert_outbox SET sent_at = now() - interval '60 days' WHERE id = $1", [all[0]!.id]);
 
-    expect(await pruneSentAlerts(db, 30)).toBe(1);
-    const rows = await db.query<{ count: string }>('SELECT count(*)::text AS count FROM alert_outbox');
-    expect(Number(rows[0]!.count)).toBe(1);
+    expect(await pruneAlerts(db, 30, 3)).toBe(1);
+    expect(Number((await db.query<{ c: string }>('SELECT count(*)::text AS c FROM alert_outbox'))[0]!.c)).toBe(1);
+  });
+
+  // If the service is off for a month the indexer keeps queueing, and nobody wants a Tuesday
+  // trade announced in March.
+  it('drops unsent rows that are no longer news', async () => {
+    await enqueueAlerts(db, [
+      { kind: 'trade', token: TOKEN, blockNumber: 50_900_011n, payload: { n: 'old' } },
+      { kind: 'trade', token: TOKEN, blockNumber: 50_900_012n, payload: { n: 'fresh' } },
+    ]);
+    const all = await listPendingAlerts(db);
+    await db.query("UPDATE alert_outbox SET created_at = now() - interval '10 days' WHERE id = $1", [all[0]!.id]);
+
+    expect(await pruneAlerts(db, 30, 3)).toBe(1);
+    const left = await listPendingAlerts(db);
+    expect(left.map((a) => (a.payload as { n: string }).n)).toEqual(['fresh']);
   });
 });
 

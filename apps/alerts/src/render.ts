@@ -9,7 +9,18 @@ import { TEXT_LIMIT, type InlineButton } from './telegram';
  * characters, context-free, which is a rule that can actually be held.
  */
 export function esc(value: string): string {
-  return value.replace(/&/gu, '&amp;').replace(/</gu, '&lt;').replace(/>/gu, '&gt;');
+  return value
+    .replace(/&/gu, '&amp;')
+    .replace(/</gu, '&lt;')
+    .replace(/>/gu, '&gt;')
+    // Telegram's own escaping rule names only the three above, because it is written for message
+    // *text*. This function also fills href attributes, and a quote there closes the attribute:
+    // a creator's website of `https://x.test/"><a href="https://phish.test` passed the site's own
+    // URL check (a quote is not whitespace) and rendered as a second, attacker-chosen link.
+    // Every attribute this module writes is double-quoted, so the quote is the one that can close
+    // one early. A single quote inside it is inert, and escaping it would put &#39; through the
+    // middle of ordinary prose for no gain.
+    .replace(/"/gu, '&quot;');
 }
 
 export function b(value: string): string {
@@ -27,7 +38,14 @@ export function code(value: string): string {
  * `javascript:` or `tg://` target inside a rendered link is a phishing primitive.
  */
 export function a(href: string | null | undefined, text: string): string {
-  if (!href || !/^https?:\/\//iu.test(href)) return esc(text);
+  if (!href || href.length > 400 || !/^https?:\/\//iu.test(href)) return esc(text);
+  // No whitespace, no quote, no angle bracket, and nothing below U+0020. Escaping already makes
+  // the attribute safe; this keeps the obviously-not-a-URL out of it as well. Written as a loop
+  // rather than a character class so this file cannot come to contain the bytes it rejects.
+  for (const ch of href) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (code <= 0x20 || code === 0x7f || ch === '"' || ch === '<' || ch === '>') return esc(text);
+  }
   return `<a href="${esc(href)}">${esc(text)}</a>`;
 }
 
@@ -235,6 +253,10 @@ export function tradePost(
     traderName: string;
     shareOfDay: number | null;
     txHash: string;
+    /** A level this trade carried the token past, said here rather than in a second post. */
+    milestone?: number | null;
+    /** The high it beat, if it set one. */
+    newHighFrom?: number | null;
   },
 ): Post {
   const buy = detail.side === 'buy';
@@ -256,6 +278,8 @@ export function tradePost(
     // With a subject, because a bare fragment under a price reads as a caption for the price.
     lines.push(`🔥 ${esc(`This trade is ${share}`)}`);
   }
+  if (detail.milestone) lines.push(`🎯 ${esc(`Carried it past ${formatUsdCompact(detail.milestone)}`)}`);
+  if (detail.newHighFrom) lines.push(`⛰️ ${esc(`New high, beating ${formatUsdCompact(detail.newHighFrom)}`)}`);
   lines.push(
     `🧑 ${esc(buy ? 'Buyer' : 'Seller')} ${detail.trader ? a(basescan(detail.trader), detail.traderName) : esc(detail.traderName)} · ${a(`https://basescan.org/tx/${detail.txHash}`, 'tx ↗')}`,
   );
@@ -343,7 +367,21 @@ export function digestPost(appUrl: string, summary: { launches: number; trades: 
   return { text: lines.join('\n'), buttons: [[{ text: '📊 Markets', url: `${appUrl}/markets` }]], preview: null };
 }
 
-/** Nothing this module builds should ever be able to exceed Telegram's limit; this is the proof. */
 export function fits(post: Post): boolean {
   return post.text.length <= TEXT_LIMIT;
+}
+
+/**
+ * Drops whole lines off the end until the post fits.
+ *
+ * Telegram rejects anything over 4,096 characters, and the transport used to `slice()` to the
+ * limit — which cuts through a tag and turns a too-long post into a 400 and a silent loss. Names,
+ * symbols and three creator-supplied URLs all flow into a card, so "it cannot get that long" was
+ * not something this module could promise. Dropping lines loses the tail; slicing loses the post.
+ */
+export function trim(post: Post): Post {
+  if (fits(post)) return post;
+  const lines = post.text.split('\n');
+  while (lines.length > 1 && lines.join('\n').length > TEXT_LIMIT) lines.pop();
+  return { ...post, text: lines.join('\n').slice(0, TEXT_LIMIT) };
 }

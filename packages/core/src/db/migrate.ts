@@ -6,7 +6,7 @@ import type { Db } from './client';
 import { BASE_STOCKS } from '../stocks';
 
 /** Bump whenever schema.sql changes, so running processes re-apply it once and then stop. */
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 async function schemaSql(): Promise<string> {
   const here = dirname(fileURLToPath(import.meta.url));

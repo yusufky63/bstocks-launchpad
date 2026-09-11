@@ -153,11 +153,11 @@ describe('a dispatch pass', () => {
     expect(first).toMatchObject({ posted: 0, deferred: 1 });
     expect(await listPendingAlerts(db)).toHaveLength(1);
 
-    // The retry sends everything that row wanted to say: the trade, and the market cap level it
-    // crossed on the way.
+    // One post per row, so the retry sends exactly one thing and the channel never sees the same
+    // trade twice.
     const second = await dispatchOnce(deps());
-    expect(second.posted).toBe(2);
-    expect(telegram.sent.map((s) => s.text.includes('passed'))).toEqual([false, true]);
+    expect(second.posted).toBe(1);
+    expect(telegram.sent).toHaveLength(1);
     expect(await listPendingAlerts(db)).toHaveLength(0);
   });
 
@@ -168,10 +168,8 @@ describe('a dispatch pass', () => {
 
     const result = await dispatchOnce(deps());
     expect(result.deferred).toBe(0);
-    // The refused post is gone; everything behind it still went out, and the level is announced
-    // exactly once even though two trades in this batch both crossed it.
+    // The refused post is gone; the one behind it still went out.
     expect(telegram.sent.filter((s) => s.text.includes('BUY'))).toHaveLength(1);
-    expect(telegram.sent.filter((s) => s.text.includes('passed'))).toHaveLength(1);
     expect(await listPendingAlerts(db)).toHaveLength(0);
   });
 
@@ -186,17 +184,59 @@ describe('a dispatch pass', () => {
 
     await dispatchOnce(deps());
     expect(await readAlertMark(db, TOKEN, 'mcap')).not.toBeNull();
-    expect(telegram.sent.some((s) => s.text.includes('passed'))).toBe(true);
+    // The level is said on the trade card rather than in a post of its own.
+    expect(telegram.sent.some((s) => s.text.includes('Carried it past'))).toBe(true);
   });
 
   it('says nothing twice about the same level', async () => {
     await enqueueAlerts(db, [tradeAlert('500000000')]);
     await dispatchOnce(deps());
-    const first = telegram.sent.filter((s) => s.text.includes('passed')).length;
+    const first = telegram.sent.filter((s) => s.text.includes('Carried it past')).length;
 
     await enqueueAlerts(db, [tradeAlert('500000000')]);
     await dispatchOnce(deps());
-    expect(telegram.sent.filter((s) => s.text.includes('passed'))).toHaveLength(first);
+    expect(telegram.sent.filter((s) => s.text.includes('Carried it past'))).toHaveLength(first);
+  });
+
+  // A digest Telegram will never accept used to mark nothing, so the same batch was rebuilt and
+  // refused on every pass for ever.
+  it('does not wedge the queue on a digest Telegram permanently refuses', async () => {
+    await enqueueAlerts(db, Array.from({ length: 40 }, () => tradeAlert('500000000')));
+    telegram.outcomes = [{ ok: false, retriable: false, reason: 'Bad Request' }];
+
+    const result = await dispatchOnce(deps());
+    expect(result.collapsed).toBe(true);
+    expect(result.posted).toBe(0);
+    expect(await listPendingAlerts(db, 100)).toHaveLength(0);
+  });
+
+  it('keeps a digest queued when Telegram might still take it', async () => {
+    await enqueueAlerts(db, Array.from({ length: 40 }, () => tradeAlert('500000000')));
+    telegram.outcomes = [{ ok: false, retriable: true, reason: 'network' }];
+
+    await dispatchOnce(deps());
+    expect(await listPendingAlerts(db, 100)).toHaveLength(40);
+  });
+
+  // Deciding reads the database. A read that failed once will usually succeed next pass, and
+  // marking the row dealt with would throw the alert away for a reason that had nothing to do
+  // with it.
+  it('leaves a row queued when deciding it throws', async () => {
+    await enqueueAlerts(db, [tradeAlert('500000000')]);
+    const broken = {
+      ...deps(),
+      resolveName: async () => {
+        throw new Error('the name service is down');
+      },
+    };
+
+    const result = await dispatchOnce(broken);
+    expect(result.deferred).toBe(1);
+    expect(telegram.sent).toHaveLength(0);
+    expect(await listPendingAlerts(db)).toHaveLength(1);
+
+    // And it recovers on its own once the read works again.
+    expect((await dispatchOnce(deps())).posted).toBe(1);
   });
 
   it('has nothing to do on an empty queue', async () => {

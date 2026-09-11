@@ -116,6 +116,7 @@ async function queueAlerts(
       kind: 'launch',
       token: l.token,
       blockNumber: l.blockNumber,
+      dedupeKey: `launch:${l.token.toLowerCase()}`,
       payload: {
         name: l.name,
         symbol: l.symbol,
@@ -135,6 +136,7 @@ async function queueAlerts(
       kind: 'trade',
       token: s.token,
       blockNumber: s.blockNumber,
+      dedupeKey: `trade:${s.txHash.toLowerCase()}:${s.logIndex}`,
       payload: {
         side: s.side,
         amountTokenRaw: s.amountTokenRaw.toString(),

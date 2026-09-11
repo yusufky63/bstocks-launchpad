@@ -40,6 +40,14 @@ const MIN_GAP_MS = 1_200;
 
 export class Telegram {
   private lastSentAt = new Map<string, number>();
+  /**
+   * When a flood limit says come back later, this is later.
+   *
+   * A retry_after over a minute is too long to sit inside one send, so the call returns and the
+   * dispatcher retries — five seconds afterwards, into the same flood limit, over and over. This
+   * makes the next attempt fail immediately and locally instead of spending a request on it.
+   */
+  private cooldownUntil = new Map<string, number>();
 
   constructor(
     private readonly token: string,
@@ -59,6 +67,10 @@ export class Telegram {
   }
 
   async sendMessage(chatId: string, text: string, options: SendOptions = {}, attempt = 0): Promise<SendResult> {
+    const until = this.cooldownUntil.get(chatId);
+    if (until !== undefined && this.now() < until) {
+      return { ok: false, retriable: true, reason: `flood limit for another ${Math.ceil((until - this.now()) / 1_000)}s` };
+    }
     // Only on the first try. A retry has already waited out the retry_after Telegram asked for.
     if (attempt === 0) await this.pace(chatId);
     const body: Record<string, unknown> = {
@@ -94,9 +106,14 @@ export class Telegram {
     // about its own limits. Waiting it out once is the whole flood strategy a single-chat sender
     // needs; a second 429 means something is wrong that sleeping will not fix.
     const wait = failure.parameters?.retry_after;
-    if (wait !== undefined && attempt === 0 && wait <= 60) {
-      await this.sleep((wait + 1) * 1_000);
-      return this.sendMessage(chatId, text, options, attempt + 1);
+    if (wait !== undefined) {
+      if (attempt === 0 && wait <= 60) {
+        await this.sleep((wait + 1) * 1_000);
+        return this.sendMessage(chatId, text, options, attempt + 1);
+      }
+      // Too long to hold a request open for, or a second one in a row. Remember it so the next
+      // pass does not spend a request discovering the same limit.
+      this.cooldownUntil.set(chatId, this.now() + (wait + 1) * 1_000);
     }
 
     const reason = failure.description ?? `http ${response.status}`;

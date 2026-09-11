@@ -722,6 +722,8 @@ export type AlertInsert = {
   token: string;
   payload: unknown;
   blockNumber: bigint;
+  /** Identifies the event, so a reorg that replays it cannot announce it twice. */
+  dedupeKey?: string | null;
 };
 
 export type AlertRow = {
@@ -746,11 +748,20 @@ function parsePayload(value: unknown): unknown {
 }
 
 export async function enqueueAlerts(db: Db, alerts: readonly AlertInsert[]) {
-  for (const chunk of chunked(alerts, 4)) {
+  // ON CONFLICT over the dedupe key, so re-indexing a range after a reorg replays the rows without
+  // replaying the announcements. A null key never conflicts, which the partial index allows.
+  for (const chunk of chunked(alerts, 5)) {
     await db.query(
-      `INSERT INTO alert_outbox (kind, token, payload, block_number)
-       VALUES ${placeholders(chunk.length, 4, ['text', 'text', 'jsonb', 'bigint'])}`,
-      chunk.flatMap((a) => [a.kind, a.token.toLowerCase(), JSON.stringify(a.payload ?? null), a.blockNumber.toString()]),
+      `INSERT INTO alert_outbox (kind, token, payload, block_number, dedupe_key)
+       VALUES ${placeholders(chunk.length, 5, ['text', 'text', 'jsonb', 'bigint', 'text'])}
+       ON CONFLICT (dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING`,
+      chunk.flatMap((a) => [
+        a.kind,
+        a.token.toLowerCase(),
+        JSON.stringify(a.payload ?? null),
+        a.blockNumber.toString(),
+        a.dedupeKey ?? null,
+      ]),
     );
   }
 }
@@ -777,13 +788,27 @@ export async function markAlertsSent(db: Db, ids: readonly string[]) {
   await db.query('UPDATE alert_outbox SET sent_at = now() WHERE id = ANY($1::bigint[])', [ids]);
 }
 
-/** Drops sent rows older than the given age, so the table does not grow without bound. */
-export async function pruneSentAlerts(db: Db, olderThanDays = 30): Promise<number> {
-  const rows = await db.query<{ id: string }>(
-    `DELETE FROM alert_outbox WHERE sent_at IS NOT NULL AND sent_at < now() - ($1 || ' days')::interval RETURNING id`,
-    [String(Math.max(1, Math.floor(olderThanDays)))],
+/**
+ * Drops rows that are no longer news.
+ *
+ * Sent rows are history. Unsent ones matter more: if the service is off for a month the indexer
+ * keeps queueing, and nobody wants a Tuesday trade announced in March — the backlog would collapse
+ * into one summary anyway, so the rows past the window are only weight.
+ */
+export async function pruneAlerts(db: Db, sentAfterDays = 30, unsentAfterDays = 3): Promise<number> {
+  // count(*) rather than RETURNING id: the caller only logs how many went, and shipping every
+  // deleted id back over the wire to length-check it is the whole cost of a large sweep.
+  const [row] = await db.query<{ removed: string }>(
+    `WITH gone AS (
+       DELETE FROM alert_outbox
+       WHERE (sent_at IS NOT NULL AND sent_at < now() - ($1 || ' days')::interval)
+          OR (sent_at IS NULL AND created_at < now() - ($2 || ' days')::interval)
+       RETURNING 1
+     )
+     SELECT count(*)::text AS removed FROM gone`,
+    [String(Math.max(1, Math.floor(sentAfterDays))), String(Math.max(1, Math.floor(unsentAfterDays)))],
   );
-  return rows.length;
+  return Number(row?.removed ?? 0);
 }
 
 // ---------------------------------------------------------------------------------------------
