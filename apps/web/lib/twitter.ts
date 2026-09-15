@@ -1,9 +1,8 @@
 /**
- * The X account this site points people at. It is the builder's own profile, not a brand account:
- * both brand accounts were suspended, and a live personal account is worth more than a dead
- * branded one. One constant so the header, the footer and the metadata agree.
+ * The X account this site points people at: the brand account, re-created after the earlier ones
+ * were suspended. One constant so the header, the footer and the metadata agree.
  */
-export const BSTOCKS_X_HANDLE = 'codexsha';
+export const BSTOCKS_X_HANDLE = 'BStocksOnBase';
 export const BSTOCKS_X_URL = `https://x.com/${BSTOCKS_X_HANDLE}`;
 
 /** Accepts @handle, handle, or an x.com / twitter.com URL; returns the canonical profile URL or null. */
