@@ -33,7 +33,7 @@ const STEPS = [
   },
   {
     title: 'Everything you see is read from the chain',
-    body: 'An indexer waits two block confirmations, then records launches, swaps, transfers and fee events. Prices, candles, holders, volume and earnings are computed from those rows. When a figure cannot be derived it shows as a dash, never as an estimate.',
+    body: 'An indexer waits three block confirmations, then records launches, swaps, transfers and fee events. Prices, candles, holders, volume and earnings are computed from those rows. When a figure cannot be derived it shows as a dash, never as an estimate.',
   },
   {
     title: 'And it tells you without being asked',

@@ -115,7 +115,7 @@ export default function DocsPage() {
 
           <Section id="indexer" index="06" title="Indexer">
             <p>
-              The indexer polls Base every 2 seconds and processes blocks that are at least 2 confirmations deep. It fetches <code>Launched</code>, <code>FeeCharged</code> and <code>FeesClaimed</code> logs from the factory and hook, PoolManager <code>Swap</code> logs filtered by the known pool ids, and ERC-20 <code>Transfer</code> logs of launched tokens, then writes everything in one database transaction: launches, swaps (with side, price and trader), fee events, transfers, balances and rebuilt one-minute candles.
+              The indexer polls Base every 2 seconds and processes blocks that are at least 3 confirmations deep (<code>INDEXER_CONFIRMATIONS</code>, its default). It fetches <code>Launched</code>, <code>FeeCharged</code> and <code>FeesClaimed</code> logs from the factory and hook, PoolManager <code>Swap</code> logs filtered by the known pool ids, and ERC-20 <code>Transfer</code> logs of launched tokens, then writes everything in one database transaction: launches, swaps (with side, price and trader), fee events, transfers, balances and rebuilt one-minute candles.
             </p>
             <p>
               Reorgs are detected by comparing the stored hash of the last processed block with the chain; on mismatch the indexer rolls back to the last common ancestor and replays. Every minute it refreshes the 13 Chainlink quotes, and it fills token metadata (description, image, website, X) from IPFS in the background. The web app's <code>/api/health</code> reports how far behind the chain head the indexer is.
@@ -204,7 +204,7 @@ export default function DocsPage() {
               <li><strong>Bounded owner powers.</strong> The factory owner can only manage the stock registry and fee parameters within hard caps, and can set the hook once.</li>
               <li><strong>Reentrancy and callbacks.</strong> The factory&apos;s launch path is <code>nonReentrant</code>; unlock callbacks accept calls only from the PoolManager.</li>
               <li><strong>Stale feeds rejected.</strong> A launch reverts when the stock&apos;s Chainlink reading is older than 7 days or not positive.</li>
-              <li><strong>Confirmed data only.</strong> The indexer records blocks two confirmations deep and rolls back on reorgs; the web app never writes rows from user input.</li>
+              <li><strong>Confirmed data only.</strong> The indexer records blocks three confirmations deep and rolls back on reorgs; the web app never writes rows from user input.</li>
               <li><strong>Profiles are signed, not trusted.</strong> Off-chain profile edits require an EIP-712 signature from the launch creator over the exact fields and image hash, with a 15-minute validity window and monotonic timestamps against replay.</li>
               <li><strong>Input validation.</strong> Every API parameter is schema-checked; addresses are checksummed and lower-cased; metadata uploads are limited to 2 MB images of four types and 1,000-character descriptions; X and Telegram links are normalised to <code>https://x.com/handle</code> and <code>https://t.me/handle</code>.</li>
               <li><strong>Trading safety.</strong> Quotes come from the v4 Quoter; swaps carry a minimum output from the user&apos;s slippage setting and a 3-minute deadline; the swap is simulated before the wallet opens.</li>

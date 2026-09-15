@@ -84,7 +84,7 @@ export function TokenView({ address, initialData }: { address: string; initialDa
           Created {formatDateTime(l.launchedAt)} against {l.stockSymbol ?? shortAddress(l.stock)}. Trades, holders and the chart appear as soon as the indexer records the block, usually within a few seconds. This page refreshes itself.
         </p>
         <AddressLabel address={l.token} explorer kind="token" chars={10} />
-        <Banner tone="info">The indexer waits for two block confirmations before recording a launch, so a reorg can never show a token that does not exist.</Banner>
+        <Banner tone="info">The indexer waits for three block confirmations before recording a launch, so a reorg can never show a token that does not exist.</Banner>
       </Module>
     );
   }
