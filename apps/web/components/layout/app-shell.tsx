@@ -173,7 +173,7 @@ export function AppShell({ children, initialMarkets }: { children: ReactNode; in
             <a href="https://basestocks.finance" target="_blank" rel="noreferrer noopener" className="text-ink-secondary hover:text-primary transition-fast underline underline-offset-2">
               BaseStocks
             </a>
-            , an independent interface on Base — not a Base or Coinbase product. The contracts it runs on are onchain and ownerless.
+            , an independent interface on Base — not a Base or Coinbase product.
           </p>
           <svg viewBox="0 84 1200 138" aria-hidden className="footer-wordmark mt-4 -mb-4 w-full h-auto select-none" role="presentation">
             <text x="0" y="286" textLength="1200" lengthAdjust="spacing" fontFamily="var(--font-display), 'Space Grotesk', system-ui, sans-serif" fontWeight="700" fontSize="288" letterSpacing="-8.6">
