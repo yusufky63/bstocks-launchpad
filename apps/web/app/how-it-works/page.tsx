@@ -17,7 +17,7 @@ const STEPS = [
   },
   {
     title: 'Every token opens at the same valuation',
-    body: 'The opening price is derived onchain from the stock\'s Chainlink feed so that each launch starts at a $5,000 fully diluted valuation. If NVDAc is $230, one NVDAc buys about 46 million tokens at launch. The number is fixed by the contract, not by the creator.',
+    body: 'The opening price is derived onchain from the stock\'s Chainlink feed so that each launch starts at a $5,000 fully diluted valuation. If NVDAc is $230, one NVDAc buys about 46 million tokens at launch. The valuation is a platform setting, bounded by the contract and never chosen by the creator, so no launch can open cheaper or dearer than any other.',
   },
   {
     title: 'Liquidity can never leave',
@@ -37,7 +37,7 @@ const STEPS = [
   },
   {
     title: 'And it tells you without being asked',
-    body: 'The same indexer feeds a Telegram channel: every launch, every large trade, every market cap milestone, posted within seconds of the block. The post is written into a queue inside the same database transaction that records the trade, so if the chain reorganises the announcement is withdrawn before it is sent rather than left standing about a trade that no longer exists.',
+    body: 'The same indexer feeds a Telegram channel: every launch, every large trade, every market cap milestone and every new high a token sets against its stock, posted within seconds of the block. The post is written into a queue inside the same database transaction that records the trade, so if the chain reorganises the announcement is withdrawn before it is sent rather than left standing about a trade that no longer exists.',
   },
 ];
 

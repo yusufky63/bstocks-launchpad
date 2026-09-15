@@ -54,7 +54,7 @@ export default function DocsPage() {
               The launchpad has four parts. <strong>Contracts</strong> on Base (a factory, a Uniswap v4 hook and a small router) hold every rule that matters: supply, liquidity, fees and who may claim them. An <strong>indexer</strong> follows Base, waits for confirmations and stores confirmed launches, swaps, transfers and fee events. The <strong>web app</strong> renders pages and a public JSON API from those rows and talks to the chain only for quotes and live pool state. A shared <strong>core</strong> library holds the stock registry, the price math and the event decoders used by both.
             </p>
             <p>
-              The web app never writes to the database and never trusts client input for anything that is displayed. What you see is either a confirmed event, a number derived from confirmed events, or a live <code>eth_call</code>.
+              Everything on a page is a confirmed event, a number derived from confirmed events, or a live <code>eth_call</code> — with one exception, and it is signed: a token&apos;s creator may replace the presentation fields of their own launch, and the server stores that only after checking the signature against the creator address recorded onchain. Nothing else the web app receives from a client is ever stored.
             </p>
           </Section>
 
@@ -141,6 +141,8 @@ export default function DocsPage() {
             <KeyValue k="GET /api/tokens/:address/swaps" v="?limit=&before= · trades with dev flag" mono={false} />
             <KeyValue k="GET /api/tokens/:address/candles" v="one-minute OHLCV in stock units" mono={false} />
             <KeyValue k="GET /api/tokens/:address/holders" v="ranked balances with labels" mono={false} />
+            <KeyValue k="GET /api/tokens/:address/image" v="the token image from our own origin, capped at 5 MB" mono={false} />
+            <KeyValue k="GET /api/names" v="?a=0x..,0x.. · Basenames for up to 100 addresses" mono={false} />
             <KeyValue k="GET|POST /api/tokens/:address/profile" v="creator-signed profile: read, or update with payload + image" mono={false} />
             <KeyValue k="GET /api/wallet/:address" v="created, holdings, claimable, earnings, trades" mono={false} />
             <KeyValue k="GET /api/stats" v="platform totals and per-stock fees and volume" mono={false} />
@@ -148,19 +150,20 @@ export default function DocsPage() {
             <KeyValue k="POST /api/quote" v="{ token, side, amountIn } · exact-in quote from the v4 Quoter" mono={false} />
             <KeyValue k="POST /api/metadata" v="multipart · pins image and ERC-7572 JSON to IPFS" mono={false} />
             <KeyValue k="GET /api/health" v="database, contracts, indexer lag, chain head" mono={false} />
+            <KeyValue k="GET /api/region" v="whether the caller's country is one this interface refuses" mono={false} />
           </Section>
 
           <Section id="alerts" index="09" title="Alerts">
 
             <p>
 
-              A Telegram channel posts every launch, every large trade and every market cap milestone. It is fed by the indexer rather than by polling the API: a row is written into an outbox table inside the same database transaction that commits the swap it describes, so an announcement is exactly as durable as the fact behind it. A reorg deletes the unsent rows for the blocks it rolled back, so the channel cannot announce a trade that did not survive.
+              A Telegram channel posts every launch, every large trade, every market cap milestone and every new high a token sets against its stock. It is fed by the indexer rather than by polling the API: a row is written into an outbox table inside the same database transaction that commits the swap it describes, so an announcement is exactly as durable as the fact behind it. A reorg deletes the unsent rows for the blocks it rolled back, so the channel cannot announce a trade that did not survive.
 
             </p>
 
             <p>
 
-              A trade qualifies by clearing an absolute dollar floor <strong>or</strong> a share of that token&apos;s own 24-hour volume, because one threshold cannot serve a token doing $200 a day and one doing $20,000. Individual buys and sells are deliberately not posted: nobody can filter a shared channel, so one busy token would bury every other. Milestones are recorded only after the post is actually delivered, so a failed send retries rather than silently skipping a level.
+              A trade qualifies by clearing an absolute dollar floor <strong>or</strong> a share of that token&apos;s own 24-hour volume, because one threshold cannot serve a token doing $200 a day and one doing $20,000. Not every buy and not every sell: nobody can filter a shared channel, so one busy token posting each of its trades would bury every other. Milestones are recorded only after the post is actually delivered, so a failed send retries rather than silently skipping a level.
 
             </p>
 
@@ -204,7 +207,7 @@ export default function DocsPage() {
               <li><strong>Bounded owner powers.</strong> The factory owner can only manage the stock registry and fee parameters within hard caps, and can set the hook once.</li>
               <li><strong>Reentrancy and callbacks.</strong> The factory&apos;s launch path is <code>nonReentrant</code>; unlock callbacks accept calls only from the PoolManager.</li>
               <li><strong>Stale feeds rejected.</strong> A launch reverts when the stock&apos;s Chainlink reading is older than 7 days or not positive.</li>
-              <li><strong>Confirmed data only.</strong> The indexer records blocks three confirmations deep and rolls back on reorgs; the web app never writes rows from user input.</li>
+              <li><strong>Confirmed data only.</strong> The indexer records blocks three confirmations deep and rolls back on reorgs. The single row the web app writes on a client&apos;s behalf is a creator&apos;s signed profile, and it is written only after the signature verifies against the launch creator.</li>
               <li><strong>Profiles are signed, not trusted.</strong> Off-chain profile edits require an EIP-712 signature from the launch creator over the exact fields and image hash, with a 15-minute validity window and monotonic timestamps against replay.</li>
               <li><strong>Input validation.</strong> Every API parameter is schema-checked; addresses are checksummed and lower-cased; metadata uploads are limited to 2 MB images of four types and 1,000-character descriptions; X and Telegram links are normalised to <code>https://x.com/handle</code> and <code>https://t.me/handle</code>.</li>
               <li><strong>Trading safety.</strong> Quotes come from the v4 Quoter; swaps carry a minimum output from the user&apos;s slippage setting and a 3-minute deadline; the swap is simulated before the wallet opens.</li>
