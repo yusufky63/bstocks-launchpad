@@ -32,14 +32,18 @@ const DESKTOP_NAV = [
   { href: '/stocks', label: 'Stocks' },
 ] as const;
 
+/**
+ * The pages on this site, and nothing else.
+ *
+ * BaseScan and base.org were general reference rather than anything about this launchpad, and the
+ * token pages already link the explorer for the address someone is actually looking at. BaseStocks
+ * left because the sentence below already links it, in the one place it needs explaining.
+ */
 const FOOTER_LINKS = [
-  ['/stats', 'Stats', false],
-  ['/alerts', 'Alerts', false],
-  ['/how-it-works', 'How it works', false],
-  ['/docs', 'Docs', false],
-  ['https://basestocks.finance', 'BaseStocks', true],
-  ['https://www.base.org/stocks', 'Tokenized stocks on Base', true],
-  ['https://basescan.org', 'BaseScan', true],
+  ['/stats', 'Stats'],
+  ['/alerts', 'Alerts'],
+  ['/how-it-works', 'How it works'],
+  ['/docs', 'Docs'],
 ] as const;
 
 function isActive(path: string, href: string): boolean {
@@ -149,26 +153,23 @@ export function AppShell({ children, initialMarkets }: { children: ReactNode; in
                   className="inline-flex items-center gap-1.5 text-[13px] text-ink-secondary hover:text-primary transition-fast"
                 >
                   <TelegramMark size={13} />
-                  <span className="text-[13px]">Alerts</span>
+                  <span className="text-[13px]">Channel</span>
                 </a>
               )}
             </span>
             <nav aria-label="Footer" className="flex flex-wrap items-center gap-x-4 gap-y-1 md:ml-auto">
-              {FOOTER_LINKS.map(([href, label, external]) =>
-                external ? (
-                  <a key={href} href={href} target="_blank" rel="noreferrer noopener" className="text-[13px] text-ink-secondary hover:text-primary transition-fast">
-                    {label}
-                  </a>
-                ) : (
-                  <Link key={href} href={href} className="text-[13px] text-ink-secondary hover:text-primary transition-fast">
-                    {label}
-                  </Link>
-                ),
-              )}
+              {FOOTER_LINKS.map(([href, label]) => (
+                <Link key={href} href={href} className="text-[13px] text-ink-secondary hover:text-primary transition-fast">
+                  {label}
+                </Link>
+              ))}
             </nav>
           </div>
+          {/* The mechanism used to be recited here as well, word for word from How it works and the
+              docs, on every page of the site. What is left is the part that is a notice rather than
+              an explanation; the fee split still sits beside the trade panel, where it is acted on. */}
           <p className="text-[12px] text-ink-muted leading-relaxed max-w-[110ch]">
-            Every token launched here has a fixed 1,000,000,000 supply, no admin, and its whole supply placed in a Uniswap v4 position against a Coinbase tokenized stock — a position no function can withdraw. Swap fees are 1%, paid in the stock: 70% to the creator, 30% to the platform. The launchpad is part of{' '}
+            The launchpad is part of{' '}
             <a href="https://basestocks.finance" target="_blank" rel="noreferrer noopener" className="text-ink-secondary hover:text-primary transition-fast underline underline-offset-2">
               BaseStocks
             </a>
