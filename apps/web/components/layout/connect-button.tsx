@@ -122,7 +122,7 @@ function WalletSheet({ open, onClose }: { open: boolean; onClose: () => void }) 
       {isConnected && address ? (
         <div className="flex flex-col gap-4">
           <AddressLabel address={address} explorer chars={8} />
-          <p className="text-[14px] text-ink-secondary">Your tokens and stocks stay in your wallet. BaseStocks never holds keys or funds.</p>
+          <p className="text-[14px] text-ink-secondary">Your tokens and stocks stay in your wallet. BStocks never holds keys or funds.</p>
           <div className="flex gap-2">
             <Link href={`/wallet/${address}`} onClick={onClose} className="inline-flex items-center justify-center h-11 px-4 rounded-[6px] border border-line-strong border-b-[3px] text-[15px] font-medium hover:bg-surface transition-fast flex-1">
               Open wallet page

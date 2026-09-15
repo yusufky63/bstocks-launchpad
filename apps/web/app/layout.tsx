@@ -41,16 +41,16 @@ const DESCRIPTION = 'Launch a token on Base that trades against a Coinbase token
 
 export const metadata: Metadata = {
   metadataBase: new URL(APP_URL),
-  title: { default: 'BaseStocks Launchpad — Tokens priced in real stocks', template: '%s · BaseStocks Launchpad' },
+  title: { default: 'BStocks Launchpad — Tokens priced in real stocks', template: '%s · BStocks Launchpad' },
   description: DESCRIPTION,
-  applicationName: 'BaseStocks Launchpad',
+  applicationName: 'BStocks Launchpad',
   appleWebApp: { capable: true, title: 'Launchpad', statusBarStyle: 'default' },
   openGraph: {
     type: 'website',
-    siteName: 'BaseStocks Launchpad',
+    siteName: 'BStocks Launchpad',
     url: '/',
     locale: 'en_US',
-    title: 'BaseStocks Launchpad — Tokens priced in real stocks',
+    title: 'BStocks Launchpad — Tokens priced in real stocks',
     description: DESCRIPTION,
   },
   twitter: { card: 'summary_large_image', creator: `@${BSTOCKS_X_HANDLE}` },
@@ -59,12 +59,12 @@ export const metadata: Metadata = {
   other: { 'base:app_id': '6a98cc686e87922b5d1d4597' },
 };
 
-/** Structured data for link previews and search: the site, and BaseStocks as the org behind it. */
+/** Structured data for link previews and search: the site, and BStocks as the org behind it. */
 const jsonLd = JSON.stringify({
   '@context': 'https://schema.org',
   '@graph': [
-    { '@type': 'WebSite', name: 'BaseStocks Launchpad', url: APP_URL, description: DESCRIPTION },
-    { '@type': 'Organization', name: 'BaseStocks', url: 'https://basestocks.finance' },
+    { '@type': 'WebSite', name: 'BStocks Launchpad', url: APP_URL, description: DESCRIPTION },
+    { '@type': 'Organization', name: 'BStocks', url: 'https://basestocks.finance' },
   ],
 });
 

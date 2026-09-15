@@ -2,7 +2,7 @@ import { ImageResponse } from 'next/og';
 
 import { OG, OgCard, OgChip, OgCta, ogCoin, ogFonts } from '@/lib/og';
 
-export const alt = 'BaseStocks Launchpad — Tokens priced in real stocks';
+export const alt = 'BStocks Launchpad — Tokens priced in real stocks';
 export const size = OG.size;
 export const contentType = 'image/png';
 

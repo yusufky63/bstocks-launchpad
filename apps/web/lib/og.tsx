@@ -3,7 +3,7 @@ import path from 'node:path';
 
 /**
  * Shared pieces for share cards rendered with next/og (Satori), in the same visual language as
- * BaseStocks (the reference app for the whole ecosystem): white canvas, a bordered card with two
+ * BStocks (the reference app for the whole ecosystem): white canvas, a bordered card with two
  * blue tick brackets, the brand lockup, Space Grotesk headline. Satori rules: every element with
  * more than one child needs display:flex, and a text node must be the only child of its element.
  */
@@ -67,7 +67,7 @@ export function OgMark({ size = 44 }: { size?: number }) {
 }
 
 /**
- * The card every share image is built on — identical frame and lockup to the BaseStocks cards
+ * The card every share image is built on — identical frame and lockup to the BStocks cards
  * (the shared block-B mark), with a mono LAUNCHPAD eyebrow telling the two apps apart.
  */
 export function OgCard({ accent = OG.blue, children, art, footer }: { accent?: string; children: React.ReactNode; art?: React.ReactNode; footer?: string }) {

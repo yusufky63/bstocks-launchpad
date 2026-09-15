@@ -43,7 +43,7 @@ const STEPS = [
 
 const FAQ = [
   ['Do I need an account?', 'No. Connect a wallet on Base and you can create or trade. The site never asks for a signature to log in.'],
-  ['How do I get NVDAc or another stock token?', 'Buy it on BaseStocks (basestocks.finance), the trading app in the same ecosystem, or through Coinbase and any Base DEX; base.org/stocks lists the venues. Coinbase tokenized stocks are available only to eligible persons outside the United States.'],
+  ['How do I get NVDAc or another stock token?', 'Buy it on BStocks (basestocks.finance), the trading app in the same ecosystem, or through Coinbase and any Base DEX; base.org/stocks lists the venues. Coinbase tokenized stocks are available only to eligible persons outside the United States.'],
   ['Why is the USD price marked "last close" on weekends?', 'Chainlink equity feeds update during US extended trading hours and hold the last close in between. Token prices in stock terms keep moving; the USD conversion uses the last feed value.'],
   ['What does the creator get?', '70% of every swap fee, in the stock, claimable at any time from the wallet page. Nothing else: the creator holds no tokens at launch unless they buy them like anyone else.'],
   ['What does the platform get?', '30% of swap fees plus the 0.0001 ETH creation fee.'],

@@ -5,7 +5,7 @@ import { getDb } from '@/lib/db.server';
 import { OG, OgCard, OgChip, OgCta, ogCoin, ogFonts } from '@/lib/og';
 import { readMarketCached } from '@/lib/token.server';
 
-export const alt = 'A token paired with a real stock on the BaseStocks Launchpad';
+export const alt = 'A token paired with a real stock on the BStocks Launchpad';
 export const size = OG.size;
 export const contentType = 'image/png';
 

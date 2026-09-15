@@ -46,7 +46,7 @@ function snap(over: Partial<Snapshot> = {}): Snapshot {
     creator: '0x3333333333333333333333333333333333333333',
     creatorName: 'yusuf.base.eth',
     website: 'https://basestocks.finance',
-    twitter: 'https://x.com/xBaseStocks',
+    twitter: 'https://x.com/xBStocks',
     telegram: null,
     poolId: `0x${'ab'.repeat(32)}`,
     ...over,
@@ -196,7 +196,7 @@ describe('a trade post', () => {
     expect(text).toContain('>X</a>');
     expect(text).toContain('>DexScreener</a>');
     expect(text).toContain('>Gecko</a>');
-    expect(text).toContain('https://x.com/xBaseStocks');
+    expect(text).toContain('https://x.com/xBStocks');
     expect(text).toContain('dexscreener.com/base/');
     expect(text).toContain('geckoterminal.com/base/pools/');
   });

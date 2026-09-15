@@ -36,7 +36,7 @@ const DESKTOP_NAV = [
  * The pages on this site, and nothing else.
  *
  * BaseScan and base.org were general reference rather than anything about this launchpad, and the
- * token pages already link the explorer for the address someone is actually looking at. BaseStocks
+ * token pages already link the explorer for the address someone is actually looking at. BStocks
  * left because the sentence below already links it, in the one place it needs explaining.
  */
 const FOOTER_LINKS = [
@@ -64,7 +64,7 @@ export function AppShell({ children, initialMarkets }: { children: ReactNode; in
         <TopTicker initialMarkets={initialMarkets} />
         <header className="border-b border-line bg-canvas/95 backdrop-blur-[2px]">
           <div className="mx-auto flex h-14 max-w-[1320px] items-center justify-between gap-2 md:gap-3 px-4 md:px-6">
-            <Link href="/" aria-label="BaseStocks Launchpad home" className="inline-flex shrink-0">
+            <Link href="/" aria-label="BStocks Launchpad home" className="inline-flex shrink-0">
               <Wordmark />
             </Link>
             <nav aria-label="Primary" className="hidden md:flex items-center gap-0 lg:gap-0.5 min-w-0">
@@ -171,7 +171,7 @@ export function AppShell({ children, initialMarkets }: { children: ReactNode; in
           <p className="text-[12px] text-ink-muted leading-relaxed max-w-[110ch]">
             The launchpad is part of{' '}
             <a href="https://basestocks.finance" target="_blank" rel="noreferrer noopener" className="text-ink-secondary hover:text-primary transition-fast underline underline-offset-2">
-              BaseStocks
+              BStocks
             </a>
             , an independent interface on Base — not a Base or Coinbase product.
           </p>

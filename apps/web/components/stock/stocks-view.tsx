@@ -41,7 +41,7 @@ export function StocksView({ initialStocks }: { initialStocks?: StocksResponse }
                 href={`https://basestocks.finance/stocks/${s.address}`}
                 target="_blank"
                 rel="noreferrer noopener"
-                title={`Buy ${s.ticker} on BaseStocks`}
+                title={`Buy ${s.ticker} on BStocks`}
                 className="absolute top-3 right-3 z-10 inline-flex items-center gap-1 h-8 px-2.5 rounded-[6px] border border-line bg-canvas text-[12px] font-medium text-ink-secondary hover:text-primary hover:border-primary transition-fast"
               >
                 Buy <ArrowUpRight size={13} strokeWidth={1.75} />

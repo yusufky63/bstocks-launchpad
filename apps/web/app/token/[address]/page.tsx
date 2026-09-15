@@ -23,7 +23,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const market = await readMarketCached(await getDb(), token);
   if (!market) return { title: 'Token' };
   const title = `${market.name} (${market.symbol}) / ${market.stock.symbol}`;
-  const description = `${market.name} trades against ${market.stock.ticker} on the BaseStocks launchpad: fixed supply, locked liquidity, fees paid in the stock.`;
+  const description = `${market.name} trades against ${market.stock.ticker} on the BStocks launchpad: fixed supply, locked liquidity, fees paid in the stock.`;
   return { title, description, openGraph: { title, description } };
 }
 
