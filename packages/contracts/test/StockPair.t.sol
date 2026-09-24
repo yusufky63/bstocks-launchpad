@@ -380,26 +380,52 @@ contract StockPairTest is Test {
         assertEq(sellFee, wantStock / 100, "fee is 1% on top of the exact output");
     }
 
-    function test_AntiSnipeFeeSchedule() public {
+    /// The fee does not move with the clock. There used to be a twenty-second window opening at
+    /// 99%, and it is gone: a token trades on the same terms in its launch block as it will a week
+    /// later.
+    function test_FeeIsOnePercentFromTheLaunchBlock() public {
         (address token, PoolId poolId) = _launch(STOCK_LOW, bytes32(uint256(14)));
-        assertEq(hook.currentFeeBps(poolId), 9_900);
-        vm.warp(block.timestamp + 10);
-        assertEq(hook.currentFeeBps(poolId), 5_000);
-        vm.warp(block.timestamp + 10);
-        assertEq(hook.currentFeeBps(poolId), 100);
+        assertEq(hook.currentFeeBps(poolId), 100, "launch block");
+        vm.warp(block.timestamp + 1);
+        assertEq(hook.currentFeeBps(poolId), 100, "one second in");
+        vm.warp(block.timestamp + 19);
+        assertEq(hook.currentFeeBps(poolId), 100, "where the window used to end");
         vm.warp(block.timestamp + 1_000);
-        assertEq(hook.currentFeeBps(poolId), 100);
+        assertEq(hook.currentFeeBps(poolId), 100, "later");
         assertTrue(token != address(0));
     }
 
-    function test_SnipeInLaunchBlockPaysNinetyNinePercent() public {
+    /// The creator's own first buy is the case the old window hurt most: it charged them 99% of
+    /// what they handed over, while a bot using an exact-output router paid the same fee on the far
+    /// smaller amount entering the pool.
+    function test_BuyingInTheLaunchBlockCostsWhatAnyOtherBuyCosts() public {
         (address token, PoolId poolId) = _launch(STOCK_LOW, bytes32(uint256(15)));
         PoolKey memory key = factory.poolKeyOf(token);
         _fundTrader(stockLow, 100e8);
         vm.prank(trader);
         router.swapExactIn(key, true, 1e8, 0, trader, block.timestamp);
-        assertEq(hook.totalFees(poolId), 0.99e8, "99% of the input goes to the fee ledger");
-        assertEq(manager.balanceOf(address(hook), uint160(STOCK_LOW)), 0.99e8, "99% sits as hook claims");
+        assertEq(hook.totalFees(poolId), 0.01e8, "1% of the input, in the launch block");
+        assertEq(manager.balanceOf(address(hook), uint160(STOCK_LOW)), 0.01e8, "and it sits as hook claims");
+    }
+
+    /// Two identical buys on one token, one in the launch block and one an hour later, cost the
+    /// same. Under the old schedule the first would have paid ninety-nine times the second.
+    function test_LaunchBlockAndLaterBuysPayTheSameFee() public {
+        (address token, PoolId poolId) = _launch(STOCK_LOW, bytes32(uint256(31)));
+        PoolKey memory key = factory.poolKeyOf(token);
+        _fundTrader(stockLow, 100e8);
+
+        vm.prank(trader);
+        router.swapExactIn(key, true, 5e8, 0, trader, block.timestamp);
+        uint256 inLaunchBlock = hook.totalFees(poolId);
+
+        vm.warp(block.timestamp + 3_600);
+        vm.prank(trader);
+        router.swapExactIn(key, true, 5e8, 0, trader, block.timestamp);
+        uint256 anHourLater = hook.totalFees(poolId) - inLaunchBlock;
+
+        assertEq(inLaunchBlock, 0.05e8, "1% of 5 stock");
+        assertEq(anHourLater, inLaunchBlock, "the clock does not change the price");
     }
 
     function test_ClaimSplitsSeventyThirty() public {

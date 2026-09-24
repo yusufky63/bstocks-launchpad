@@ -3,8 +3,14 @@
  * One command for a fresh contract deployment, from the repository root, in any shell:
  *   node scripts/redeploy.mjs
  * Reads PRIVATE_KEY from .env and the RPC from apps/indexer/.env, broadcasts the Foundry deploy
- * script to Base, writes the new addresses into both env files and resets the database so the
- * indexer starts from the new deploy block. Restart the indexer and the web app afterwards.
+ * script to Base and writes the new addresses into both env files, keeping the previous ones as
+ * STOCKPAIR_PREVIOUS_*. Restart the indexer and the web app afterwards.
+ *
+ * It does not reset the database. It used to, so the indexer could start clean from the new deploy
+ * block — right for a deployment nobody has used, and catastrophic for one people have: it would
+ * take every launch, trade, chart and holder list on the old contracts with it. The indexer follows
+ * the old addresses alongside the new ones instead, so the history stays where it is and new
+ * launches simply arrive on the newer factory.
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -34,5 +40,5 @@ const run = (cmd, args, opts = {}) => {
 const contracts = resolve(root, 'packages/contracts');
 run('forge', ['script', 'script/Deploy.s.sol:Deploy', '--rpc-url', rpc, '--private-key', key, '--broadcast'], { cwd: contracts });
 run('node', [resolve(root, 'scripts/apply-deployment.mjs')], { cwd: root });
-run('pnpm', ['exec', 'tsx', 'src/db/cli.ts', 'reset'], { cwd: resolve(root, 'packages/core'), env: { ...process.env, CONFIRM_RESET: 'yes' } });
+run('pnpm', ['exec', 'tsx', 'src/db/cli.ts', 'migrate'], { cwd: resolve(root, 'packages/core') });
 console.log('\nDone. Restart the indexer (pnpm dev:indexer) and the web app (pnpm dev) so they read the new addresses.');

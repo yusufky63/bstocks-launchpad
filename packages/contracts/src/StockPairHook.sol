@@ -44,11 +44,8 @@ contract StockPairHook is HookBase, IUnlockCallback, ReentrancyGuard {
     }
 
     uint256 public constant BPS = 10_000;
-    /// @notice Steady-state swap fee: 1% of the stock-side amount.
+    /// @notice The swap fee, from the first block: 1% of the stock-side amount.
     uint256 public constant BASE_FEE_BPS = 100;
-    /// @notice Fee in the first block after launch; decays linearly to BASE_FEE_BPS.
-    uint256 public constant START_FEE_BPS = 9_900;
-    uint256 public constant ANTI_SNIPE_SECONDS = 20;
     /// @notice Creator share of every fee; the remainder goes to the platform treasury.
     uint256 public constant CREATOR_SHARE_BPS = 7_000;
 
@@ -124,12 +121,19 @@ contract StockPairHook is HookBase, IUnlockCallback, ReentrancyGuard {
     }
 
     /// @notice Fee in basis points that a swap in this pool pays right now.
-    function currentFeeBps(PoolId id) public view returns (uint256) {
-        PoolInfo storage info = _pools[id];
-        if (info.token == address(0)) return BASE_FEE_BPS;
-        uint256 elapsed = block.timestamp - info.launchedAt;
-        if (elapsed >= ANTI_SNIPE_SECONDS) return BASE_FEE_BPS;
-        return START_FEE_BPS - ((START_FEE_BPS - BASE_FEE_BPS) * elapsed) / ANTI_SNIPE_SECONDS;
+    ///
+    /// @dev One number, from the launch block onwards. The previous hook opened at 99% and decayed
+    ///      to 1% over twenty seconds, which was meant to make the first block worthless to a
+    ///      sniper. It did not: the fee is taken from the *specified* side of a swap, so an
+    ///      exact-output buy paid it on the amount entering the pool rather than on the amount the
+    ///      trader handed over, and the same position cost about a fiftieth of what an honest
+    ///      exact-input buyer paid. The window punished the creator harder than the bot it was
+    ///      aimed at. A token here now opens for trading like any other.
+    ///
+    ///      `PoolInfo.launchedAt` stays: it is a fact about the pool and the struct is read
+    ///      through `poolInfo`.
+    function currentFeeBps(PoolId) public pure returns (uint256) {
+        return BASE_FEE_BPS;
     }
 
     // ---------------------------------------------------------------------------------------
