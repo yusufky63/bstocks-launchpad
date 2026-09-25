@@ -11,7 +11,7 @@ import { EMPTY_IMAGE_HASH, PROFILE_DOMAIN, PROFILE_MAX_AGE_SECONDS, PROFILE_TYPE
 
 export class ProfileError extends Error {
   constructor(
-    readonly code: 'TOKEN_NOT_FOUND' | 'NOT_CREATOR' | 'BAD_SIGNATURE' | 'EXPIRED' | 'STALE' | 'IMAGE_MISMATCH',
+    readonly code: 'TOKEN_NOT_FOUND' | 'ONCHAIN_PROFILE' | 'NOT_CREATOR' | 'BAD_SIGNATURE' | 'EXPIRED' | 'STALE' | 'IMAGE_MISMATCH',
     message: string,
     readonly status: number,
   ) {
@@ -45,6 +45,9 @@ export async function applyProfileUpdate(
 ): Promise<{ updated: boolean }> {
   const market = await readMarket(db, input.token);
   if (!market) throw new ProfileError('TOKEN_NOT_FOUND', 'Unknown token.', 404);
+  // One editing path per token: a token launched with an editable profile (locked or not) changes
+  // onchain only, so a signed profile would sit on top of it and misstate what the token says.
+  if (market.metadata_editable) throw new ProfileError('ONCHAIN_PROFILE', "This token's profile lives onchain; update it from the token page.", 409);
   if (market.creator.toLowerCase() !== input.signer.toLowerCase()) throw new ProfileError('NOT_CREATOR', 'Only the wallet that created this token can edit its profile.', 403);
   if (input.message.token.toLowerCase() !== input.token.toLowerCase()) throw new ProfileError('BAD_SIGNATURE', 'The signed message is for a different token.', 400);
 

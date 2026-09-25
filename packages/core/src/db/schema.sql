@@ -256,3 +256,46 @@ CREATE INDEX IF NOT EXISTS alert_outbox_block_idx ON alert_outbox (block_number)
 -- The row already sent keeps its key, so the second attempt is refused rather than announced.
 ALTER TABLE alert_outbox ADD COLUMN IF NOT EXISTS dedupe_key text;
 CREATE UNIQUE INDEX IF NOT EXISTS alert_outbox_dedupe_idx ON alert_outbox (dedupe_key) WHERE dedupe_key IS NOT NULL;
+
+-- Version 8: several live deployments, editable profiles and the creator buy at launch.
+--
+-- Earlier factories and hooks stay live after a new deployment, so each launch records the pair that
+-- created it: pool keys, fee reads and claims must use the launch's own hook. NULL is a row indexed
+-- before this version (or by an older release after a rollback); the indexer fills each one in with
+-- the factory that emitted its Launched log, read back from the chain, when it starts.
+ALTER TABLE launches ADD COLUMN IF NOT EXISTS factory text;
+ALTER TABLE launches ADD COLUMN IF NOT EXISTS hook text;
+
+-- How far each deployment's logs are indexed. One added below the cursor gets no row until its own
+-- catch-up pass over [deploy block, cursor) has committed, so a crash mid-pass simply reruns it. The
+-- main pass moves every row on with the cursor, but only while there is no gap below it, so a stretch
+-- another writer covered without this deployment (an older release after a rollback) stays visible
+-- and is read on the next start.
+CREATE TABLE IF NOT EXISTS indexed_deployments (
+  factory           text PRIMARY KEY,         -- lowercase factory address
+  caught_up_through bigint NOT NULL           -- every block up to and including this is indexed
+);
+
+-- Editable profiles (opt-in at launch, contract URI only) and the creator buy at launch.
+-- Every earlier launch was created with no metadata role: false is the truth for them.
+ALTER TABLE launches ADD COLUMN IF NOT EXISTS metadata_editable boolean NOT NULL DEFAULT false;
+ALTER TABLE launches ADD COLUMN IF NOT EXISTS metadata_locked_at timestamptz;
+ALTER TABLE launches ADD COLUMN IF NOT EXISTS current_contract_uri text;   -- NULL = contract_uri (the launch value, never overwritten)
+ALTER TABLE launches ADD COLUMN IF NOT EXISTS telegram text;
+-- ON DELETE CASCADE only matters to an older release run against this schema (a rollback): its
+-- reorg rollback deletes launches without knowing this table exists. This release deletes the rows
+-- in the reorged range itself before it deletes any launch.
+CREATE TABLE IF NOT EXISTS metadata_updates (
+  tx_hash      text NOT NULL,
+  log_index    integer NOT NULL,
+  token        text NOT NULL REFERENCES launches(token) ON DELETE CASCADE,
+  kind         text NOT NULL CHECK (kind IN ('uri', 'lock')),
+  contract_uri text,
+  block_number bigint NOT NULL,
+  block_time   timestamptz NOT NULL,
+  PRIMARY KEY (tx_hash, log_index),
+  CHECK ((kind = 'uri') = (contract_uri IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS metadata_updates_token_idx ON metadata_updates (token, block_number DESC, log_index DESC);
+CREATE INDEX IF NOT EXISTS metadata_updates_block_idx ON metadata_updates (block_number);
+-- No dev-buy columns: the creator buy is derived from the buy swaps in the launch transaction.

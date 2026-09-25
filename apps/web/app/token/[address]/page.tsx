@@ -9,7 +9,7 @@ import { parseAddressParam } from '@/lib/api.server';
 import { cached, TTL } from '@/lib/cache.server';
 import { getDb } from '@/lib/db.server';
 import { readLaunchOnchain } from '@/lib/onchain.server';
-import { readMarketCached, readTokenDetails } from '@/lib/token.server';
+import { readMarketCached, readTokenCached, readTokenDetails } from '@/lib/token.server';
 import type { TokenResponse } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
@@ -33,10 +33,10 @@ export default async function TokenPage({ params, searchParams }: Props) {
   if (!token) notFound();
 
   const db = await getDb();
-  const market = await readMarketCached(db, token);
+  const indexed = await readTokenCached(db, token);
   let initial: TokenResponse;
-  if (market) {
-    initial = { status: 'indexed', market, details: await readTokenDetails(db, market) };
+  if (indexed) {
+    initial = { status: 'indexed', market: indexed.market, details: await readTokenDetails(db, indexed.market), launch: indexed.launch, profile: indexed.profile };
   } else {
     // Freshly launched tokens exist onchain before the indexer stores them.
     const onchain = await cached(`onchain:${token}`, TTL.chain, () => readLaunchOnchain(token as Address));

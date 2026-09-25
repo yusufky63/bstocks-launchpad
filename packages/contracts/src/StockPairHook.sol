@@ -19,9 +19,9 @@ import { SafeCast } from "@uniswap/v4-core/src/libraries/SafeCast.sol";
 import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 /// @title StockPairHook
-/// @notice Uniswap v4 hook attached to every StockPair pool. It charges the swap fee always in
-///         the tokenized stock (never in the launched token), applies a 20 second anti-snipe
-///         schedule after launch, and keeps a claimable ledger for the creator and the platform.
+/// @notice Uniswap v4 hook attached to every StockPair pool. It charges a flat 1% swap fee from
+///         the launch block on, always in the tokenized stock (never in the launched token), and
+///         keeps a claimable ledger for the creator and the platform.
 /// @dev Fees are collected as ERC-6909 claims on the PoolManager, so the tokens stay inside
 ///      the PoolManager until someone claims. Pools using this hook can only be initialized by
 ///      the factory. The hook never holds pool liquidity.
@@ -73,6 +73,9 @@ contract StockPairHook is HookBase, IUnlockCallback, ReentrancyGuard {
     error OnlyFactory();
     error UnknownPool();
     error NothingToClaim();
+    /// @notice A swap whose specified side is the stock stopped short of the requested amount.
+    /// @dev v4 wraps it: WrappedError(hook, afterSwap.selector, PartialFill(), details).
+    error PartialFill();
 
     constructor(IPoolManager manager, address factory_) HookBase(manager) {
         factory = factory_;
@@ -238,13 +241,16 @@ contract StockPairHook is HookBase, IUnlockCallback, ReentrancyGuard {
         PoolInfo storage info = _pools[id];
 
         bool exactIn = params.amountSpecified < 0;
-        Currency unspecified = (params.zeroForOne == exactIn) ? key.currency1 : key.currency0;
+        bool specifiedIs0 = params.zeroForOne == exactIn;
+        Currency unspecified = specifiedIs0 ? key.currency1 : key.currency0;
         if (Currency.unwrap(unspecified) != info.stock) {
+            // The stock was the specified side, so beforeSwap already took the fee on the whole
+            // requested amount. That is only right if the pool then filled all of it.
+            _requireFullFill(id, params, specifiedIs0 ? delta.amount0() : delta.amount1());
             return (HookBase.afterSwap.selector, 0);
         }
 
-        int128 unspecifiedDelta =
-            (params.zeroForOne == exactIn) ? delta.amount1() : delta.amount0();
+        int128 unspecifiedDelta = specifiedIs0 ? delta.amount1() : delta.amount0();
         uint256 unspecifiedAmount = unspecifiedDelta < 0
             ? uint256(uint128(-unspecifiedDelta))
             : uint256(uint128(unspecifiedDelta));
@@ -254,6 +260,21 @@ contract StockPairHook is HookBase, IUnlockCallback, ReentrancyGuard {
 
         _charge(id, info, unspecified, fee, feeBps);
         return (HookBase.afterSwap.selector, fee.toInt128());
+    }
+
+    /// @dev beforeSwap moved the pool's target to amountSpecified + fee (Hooks.beforeSwap). The
+    ///      pool reports the specified side as that target minus what it could not fill, so
+    ///      equality holds exactly when nothing was left over. Same fee arithmetic as
+    ///      `_beforeSwap`, including a fee that rounds to zero.
+    function _requireFullFill(PoolId id, SwapParams calldata params, int128 specifiedDelta)
+        private
+        pure
+    {
+        uint256 amount = params.amountSpecified < 0
+            ? uint256(-params.amountSpecified)
+            : uint256(params.amountSpecified);
+        int256 fee = int256((amount * currentFeeBps(id)) / BPS);
+        if (int256(specifiedDelta) != params.amountSpecified + fee) revert PartialFill();
     }
 
     /// @dev Mints ERC-6909 claims for the fee (a debit on the hook that the returned hook delta

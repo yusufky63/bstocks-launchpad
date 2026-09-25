@@ -9,7 +9,7 @@ the outbound half: it reads what the indexer queued, decides what is worth sayin
 
 | | |
 | --- | --- |
-| **New launch** | every one |
+| **New launch** | every one, at its opening price, with the creator's buy in the launch transaction and an editable profile on the card when there is one |
 | **Large trade** | a trade that clears `ALERTS_MIN_TRADE_USD`, *or* is `ALERTS_MIN_TRADE_SHARE` of that token's own 24h volume while still clearing `ALERTS_MIN_TRADE_FLOOR_USD` |
 | **Market cap milestone** | $10K, $25K, $50K, $100K, $250K, $500K, $1M — each once, ever |
 | **New high** | when it beats the last one by at least 5% |
@@ -18,6 +18,10 @@ Not every buy and not every sell. Nobody can filter this channel: everyone gets 
 the only control is leaving. $STOCK alone did 2,323 trades in its first five days, and posting them
 would make the channel unreadable in a day — which is harder to undo than never having started.
 Per-token trade alerts belong in a bot people subscribe to, not in a shared channel.
+
+The creator's buy inside the launch transaction is a line on the launch card, not a trade post of
+its own; posting both would announce one buy twice. Profile edits and locks are never posted: a
+creator with an editable profile could otherwise post to the channel as often as they pay for gas.
 
 The thresholds exist because one number cannot serve both ends of the range. An absolute floor
 alone means a token doing $200 a day is never heard from; a share of daily volume alone means the
@@ -73,6 +77,10 @@ numeric id survives a rename.
 A container, the same way the indexer runs. `docker build -f apps/alerts/Dockerfile .` from the
 repository root. Unlike the indexer there is no single-instance requirement in principle — but two
 copies would both drain the same outbox and double-post, so run one.
+
+Only the indexer migrates the database, so ship the indexer (or run `pnpm db:migrate`) before a
+build of this service that reads new tables. Until the database has them, the service reads and
+prunes nothing, leaves every row queued, and says what is missing in `lastError` on `/health`.
 
 It is deliberately not on Vercel. A cron's best case is one run a minute, which is a long time for
 a trade alert, and a serverless function cannot hold a queue across invocations: a `retry_after` of

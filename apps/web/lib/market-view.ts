@@ -1,6 +1,10 @@
+import { sha256, stringToBytes } from 'viem';
+
+import { SUPPLY_RAW } from '@stockpair/core';
 import type { MarketRow } from '@stockpair/core/db';
 
-import { ipfsToHttp } from './env';
+import { ipfsToHttp, publicEnv } from './env';
+import type { LaunchInfo, ProfileInfo } from './types';
 
 /** What the UI renders for a market; every number is derived, none is invented. */
 export type MarketView = {
@@ -15,6 +19,9 @@ export type MarketView = {
   /** When the creator last updated the profile with a signed message; null when only launch metadata is shown. */
   profileUpdatedAt: string | null;
   creator: string;
+  /** The factory and hook that launched this token; null only for rows not yet backfilled (the oldest deployment). */
+  factory: string | null;
+  hook: string | null;
   stock: { address: string; symbol: string; ticker: string; decimals: number };
   poolId: string;
   tokenIsCurrency0: boolean;
@@ -56,7 +63,54 @@ export function feedStatus(feedUpdatedAt: Date | string | null): MarketView['sto
   return age < 3 * 60 * 60 * 1000 ? 'live' : 'holding';
 }
 
+/**
+ * The image a token shows. A token launched with an editable profile is changed onchain only, so a
+ * signed off-chain profile never applies to it; every other token keeps the signed override.
+ */
+export function effectiveImageUri(row: Pick<MarketRow, 'metadata_editable' | 'image_uri'> & { profile_image_uri?: string | null }): string | null {
+  if (row.metadata_editable) return row.image_uri;
+  return row.profile_image_uri ?? row.image_uri;
+}
+
+/**
+ * `ipfs://` and a bare CID, nothing else: the one form whose bytes cannot change behind the same URI.
+ * A path after the CID can climb out of it with `..` (to a mutable /ipns/ name on the gateway), and
+ * a web address serves whatever its owner puts there.
+ */
+export function isBareIpfsUri(uri: string | null | undefined): boolean {
+  return typeof uri === 'string' && /^ipfs:\/\/[A-Za-z0-9]{46,128}$/u.test(uri);
+}
+
+/**
+ * Whether what a URI serves can change behind it. Nothing, an inline `data:` document and any
+ * `ipfs://` path that stays under its CID are fixed; the first factory accepted all of these, so
+ * its tokens must not be told their profile is mutable. Only a path that can climb out of the CID
+ * (`..`, a backslash) or a web address is.
+ */
+export function isFixedContentUri(uri: string | null | undefined): boolean {
+  if (!uri) return true;
+  if (uri.startsWith('data:')) return true;
+  return uri.startsWith('ipfs://') && ipfsToHttp(uri) !== null;
+}
+
+/** First 12 hex of sha256(uri): changes whenever the image does, so the proxy URL can be cached hard. */
+export function imageVersion(uri: string): string {
+  return sha256(stringToBytes(uri)).slice(2, 14);
+}
+
+/**
+ * Our own origin's copy of the image, versioned by what it points at; null when there is none.
+ * Absolute, because the JSON API is read from other origins too: the BStocks app renders these
+ * straight into an <img> on basestocks.finance, where a relative path would 404.
+ */
+export function imageProxyUrl(token: string, uri: string | null): string | null {
+  if (!uri || !ipfsToHttp(uri)) return null;
+  return `${publicEnv.appUrl.replace(/\/+$/u, '')}/api/tokens/${token.toLowerCase()}/image?v=${imageVersion(uri)}`;
+}
+
 export function toMarketView(row: MarketRow, now = new Date()): MarketView {
+  // Editable tokens have one editing path, onchain; the signed profile is merged only for the rest.
+  const signed = row.metadata_editable ? null : row;
   const stockUsd = row.stock_usd8 === null ? null : Number(row.stock_usd8) / 1e8;
   const priceInStock = row.last_price === null ? null : Number(row.last_price);
   const priceUsd = priceInStock !== null && stockUsd !== null ? priceInStock * stockUsd : null;
@@ -69,13 +123,15 @@ export function toMarketView(row: MarketRow, now = new Date()): MarketView {
     name: row.name,
     symbol: row.symbol,
     // A creator-signed profile overrides the launch metadata field by field.
-    imageUrl: ipfsToHttp(row.profile_image_uri ?? row.image_uri),
-    description: row.profile_description ?? row.description,
-    website: row.profile_website ?? row.website,
-    twitter: row.profile_twitter ?? row.twitter ?? null,
-    telegram: row.profile_telegram ?? null,
-    profileUpdatedAt: row.profile_updated_at ? new Date(row.profile_updated_at).toISOString() : null,
+    imageUrl: imageProxyUrl(row.token, effectiveImageUri(row)),
+    description: signed?.profile_description ?? row.description,
+    website: signed?.profile_website ?? row.website,
+    twitter: signed?.profile_twitter ?? row.twitter ?? null,
+    telegram: signed?.profile_telegram ?? row.telegram ?? null,
+    profileUpdatedAt: signed?.profile_updated_at ? new Date(signed.profile_updated_at).toISOString() : null,
     creator: row.creator,
+    factory: row.factory ?? null,
+    hook: row.hook ?? null,
     stock: {
       address: row.stock,
       symbol: row.stock_symbol,
@@ -105,6 +161,41 @@ export function toMarketView(row: MarketRow, now = new Date()): MarketView {
     lastTradeAt: row.last_trade_at ? new Date(row.last_trade_at).toISOString() : null,
     txHash: row.tx_hash,
     blockNumber: String(row.block_number),
+  };
+}
+
+/** The deployment that launched the token and the creator's buy at launch, if any. */
+export function toLaunchInfo(row: MarketRow): LaunchInfo {
+  const tokensOut = row.creator_buy_token_raw === null ? 0n : BigInt(row.creator_buy_token_raw);
+  return {
+    factory: row.factory ?? null,
+    hook: row.hook ?? null,
+    creatorBuy:
+      tokensOut > 0n
+        ? {
+            stockInRaw: String(row.creator_buy_stock_raw ?? '0'),
+            feeRaw: String(row.creator_buy_fee_raw ?? '0'),
+            tokensOutRaw: tokensOut.toString(),
+            supplyBps: Number((tokensOut * 10_000n) / SUPPLY_RAW),
+            txHash: row.tx_hash,
+          }
+        : null,
+  };
+}
+
+/** Where the profile stands onchain. Every token from before editable profiles reads `immutable`. */
+export function toProfileInfo(row: MarketRow): ProfileInfo {
+  const contractUri = row.current_contract_uri ?? row.contract_uri;
+  // The factory checks only the URI, never the document behind it, so the image that document
+  // names is checked too. No image means nothing mutable is shown.
+  const image = effectiveImageUri(row);
+  return {
+    onchain: !row.metadata_editable ? 'immutable' : row.metadata_locked_at ? 'locked' : 'editable',
+    contractUri,
+    contentAddressed: isFixedContentUri(contractUri) && isFixedContentUri(image),
+    updates: Number(row.profile_updates ?? 0),
+    lastUpdatedAt: row.profile_updated_onchain_at ? new Date(row.profile_updated_onchain_at).toISOString() : null,
+    lockedAt: row.metadata_locked_at ? new Date(row.metadata_locked_at).toISOString() : null,
   };
 }
 

@@ -5,6 +5,7 @@ import { createPostgresDb, pruneAlerts } from '@stockpair/core/db';
 
 import { loadConfig, loadEnvFiles } from './config';
 import { dispatchOnce } from './dispatch';
+import { schemaProblem } from './schema';
 import { Telegram } from './telegram';
 
 function log(message: string, fields: Record<string, unknown> = {}): void {
@@ -58,9 +59,17 @@ async function main(): Promise<void> {
   log('alerts starting', { channel: config.channelId, dryRun: config.dryRun, minTradeUsd: config.minTradeUsd });
 
   let lastPruneAt = 0;
+  // Checked until it passes and then never again, because a schema does not go backwards. Nothing
+  // is read or pruned while it fails, so the queue waits whole for the indexer's migration.
+  let schemaReady = false;
   while (!stopped) {
     const started = Date.now();
     try {
+      if (!schemaReady) {
+        const problem = await schemaProblem(db);
+        if (problem !== null) throw new Error(`database not ready for this build, waiting: ${problem}`);
+        schemaReady = true;
+      }
       const result = await dispatchOnce({ db, telegram, config, log });
       if (result.considered > 0) log('dispatched', { ...result });
       state.lastPass = { ...result, at: new Date().toISOString() };

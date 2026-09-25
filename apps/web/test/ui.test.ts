@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { bpsToPct, formatCompact, formatPct, formatTokenAmount, formatUsd, shortAddress, timeAgo } from '@/lib/format';
 import { isUsMarketOpen, nextSessionBoundary, untilLabel } from '@/lib/market-hours';
-import { deadlineIn, describeTradeError, minOutFor, shareOf } from '@/lib/trade';
+import { describeTradeError, minOutFor, shareOf } from '@/lib/trade';
 import { poolReserves, positionAmounts, sqrtRatioAtTick } from '@/lib/liquidity';
 import { normalizeTwitter, twitterHandle } from '@/lib/twitter';
 import { normalizeTelegram } from '@/lib/profile';
@@ -16,10 +16,6 @@ describe('trade helpers', () => {
     expect(minOutFor(1_000_000n, 0)).toBe(1_000_000n);
     expect(minOutFor(1_000_000n, 20_000)).toBe(0n);
     expect(minOutFor(7n, 100)).toBe(6n);
-  });
-
-  it('builds deadlines in unix seconds', () => {
-    expect(deadlineIn(180, 1_700_000_000_500)).toBe(1_700_000_180n);
   });
 
   it('takes a share of a balance in raw units', () => {

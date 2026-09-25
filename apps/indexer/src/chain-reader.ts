@@ -1,5 +1,14 @@
 import type { Address, Hex } from 'viem';
-import { createPublicClient, fallback, http, parseAbi } from 'viem';
+import {
+  BaseError,
+  ContractFunctionRevertedError,
+  ContractFunctionZeroDataError,
+  createPublicClient,
+  fallback,
+  http,
+  parseAbi,
+  TransactionReceiptNotFoundError,
+} from 'viem';
 import { base } from 'viem/chains';
 
 import type { RawLog } from '@stockpair/core';
@@ -18,6 +27,16 @@ export interface ChainReader {
   readFeed(feed: Address): Promise<{ answer: bigint; updatedAt: bigint } | null>;
   /** Whether the factory currently accepts launches against this stock. */
   readStockEnabled(factory: Address, stock: Address): Promise<boolean | null>;
+  /**
+   * A mined transaction's logs, from its receipt, or null when the node has no receipt for it. The
+   * three reads below are how the indexer checks its deployment list against the chain; each one
+   * throws on a transport failure, so an RPC hiccup is retried instead of read as a real answer.
+   */
+  getTransactionLogs(hash: Hex): Promise<RawLog[] | null>;
+  /** `launchOf(token).creator` on a factory: the zero address when it did not launch the token, null when the call reverted or nothing is deployed there. */
+  readLaunchCreator(factory: Address, token: Address): Promise<Address | null>;
+  /** The hook a factory is wired to, or null when the call reverted or nothing is deployed there. */
+  readFactoryHook(factory: Address): Promise<Address | null>;
 }
 
 const feedAbi = parseAbi([
@@ -28,6 +47,21 @@ const factoryStockAbi = parseAbi([
   'struct Stock { address feed; bool enabled; uint8 decimals; string symbol; }',
   'function stockInfo(address stock) view returns (Stock)',
 ]);
+
+// The same on every factory deployed so far.
+const factoryLaunchAbi = parseAbi([
+  'struct Launch { address stock; address creator; int24 tickLower; int24 tickUpper; uint128 liquidity; uint64 launchedAt; uint160 openingSqrtPriceX96; uint256 stockUsd8; }',
+  'function launchOf(address token) view returns (Launch)',
+  'function hook() view returns (address)',
+]);
+
+/** The chain answered: the call reverted, or there is no contract code to call. Not a transport error. */
+function answeredWithoutResult(error: unknown): boolean {
+  return (
+    error instanceof BaseError &&
+    error.walk((e) => e instanceof ContractFunctionRevertedError || e instanceof ContractFunctionZeroDataError) !== null
+  );
+}
 
 export function createChainReader(rpcUrls: readonly string[]): ChainReader {
   const client = createPublicClient({
@@ -85,6 +119,40 @@ export function createChainReader(rpcUrls: readonly string[]): ChainReader {
         return info.feed === '0x0000000000000000000000000000000000000000' ? null : info.enabled;
       } catch {
         return null;
+      }
+    },
+    async getTransactionLogs(hash) {
+      try {
+        const receipt = await client.getTransactionReceipt({ hash });
+        return receipt.logs.map((log) => ({
+          address: log.address,
+          topics: log.topics as [Hex, ...Hex[]],
+          data: log.data,
+          blockNumber: log.blockNumber,
+          blockHash: log.blockHash,
+          transactionHash: log.transactionHash,
+          logIndex: log.logIndex,
+        }));
+      } catch (error) {
+        if (error instanceof BaseError && error.walk((e) => e instanceof TransactionReceiptNotFoundError)) return null;
+        throw error;
+      }
+    },
+    async readLaunchCreator(factory, token) {
+      try {
+        const launch = await client.readContract({ address: factory, abi: factoryLaunchAbi, functionName: 'launchOf', args: [token] });
+        return launch.creator;
+      } catch (error) {
+        if (answeredWithoutResult(error)) return null;
+        throw error;
+      }
+    },
+    async readFactoryHook(factory) {
+      try {
+        return await client.readContract({ address: factory, abi: factoryLaunchAbi, functionName: 'hook' });
+      } catch (error) {
+        if (answeredWithoutResult(error)) return null;
+        throw error;
       }
     },
     async readFeed(feed) {

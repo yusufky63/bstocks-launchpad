@@ -8,8 +8,10 @@ import {
   listPendingAlerts,
   migrate,
   readAlertMark,
+  updateLaunchMetadata,
   upsertBlock,
   upsertStockQuote,
+  upsertTokenProfile,
   type Db,
 } from '@stockpair/core/db';
 import { BASE_STOCKS } from '@stockpair/core';
@@ -69,7 +71,8 @@ async function seed(): Promise<void> {
   await insertLaunch(db, {
     token: TOKEN, stock: NVDAc, creator: CREATOR, poolId: `0x${'ab'.repeat(32)}`,
     tokenIsCurrency0: true, name: 'StockPair', symbol: 'STOCK', contractUri: 'ipfs://x',
-    openingSqrtPriceX96: 1n, tickLower: -887_200, tickUpper: 100, liquidity: 10n ** 20n,
+    // 1e-8 NVDAc a token, so $0.00000225 at $224.69: well under the last trade below.
+    openingSqrtPriceX96: (1n << 96n) / 1_000_000_000n, tickLower: -887_200, tickUpper: 100, liquidity: 10n ** 20n,
     stockUsd8: 22_469_000_000n, blockNumber: BLOCK, blockHash: '0xb1', txHash: '0xt1',
     logIndex: 0, launchedAt: new Date('2026-09-05T12:00:00Z'),
   });
@@ -86,7 +89,7 @@ async function seed(): Promise<void> {
   });
 }
 
-function tradeAlert(stockRaw: string) {
+function tradeAlert(stockRaw: string, over: Record<string, unknown> = {}) {
   return {
     kind: 'trade' as const,
     token: TOKEN,
@@ -95,6 +98,24 @@ function tradeAlert(stockRaw: string) {
       side: 'buy', amountTokenRaw: (10n ** 24n).toString(), amountStockRaw: stockRaw,
       priceTokenInStock: '0.000000049', trader: TRADER, txHash: '0xs1', logIndex: 0,
       blockTime: '2026-09-11T00:00:00Z', stockDecimals: 8, stockUsd8: '22469000000',
+      ...over,
+    },
+  };
+}
+
+/** A launch as the indexer queues it now: its own opening price, the creator's buy, the profile choice. */
+function launchAlert(over: Record<string, unknown> = {}) {
+  return {
+    kind: 'launch' as const,
+    token: TOKEN,
+    blockNumber: BLOCK,
+    payload: {
+      name: 'StockPair', symbol: 'STOCK', creator: CREATOR, stock: NVDAc, stockUsd8: '22469000000',
+      txHash: '0xt1', launchedAt: '2026-09-05T12:00:00.000Z',
+      openingPriceUsd: 0.0000052,
+      creatorBuy: { stockInRaw: '211000000', feeRaw: '2110000', tokensOutRaw: (434n * 10n ** 23n).toString(), supplyBps: 434 },
+      metadataEditable: true,
+      ...over,
     },
   };
 }
@@ -119,6 +140,130 @@ describe('a dispatch pass', () => {
     expect(telegram.sent[0]?.text).toContain('>NVDAc</a>');
     expect(telegram.sent[0]?.text).not.toContain('holders');
     expect(await listPendingAlerts(db)).toHaveLength(0);
+  });
+
+  // The market row is read at send time, and its last price is the one after the creator's buy.
+  it("announces the launch's own opening price, buy and profile choice from what was queued", async () => {
+    await enqueueAlerts(db, [launchAlert()]);
+
+    expect((await dispatchOnce(deps())).posted).toBe(1);
+    const text = telegram.sent[0]?.text ?? '';
+    expect(text).toContain('Opens at $0.00000520 · 💎 FDV $5.2K');
+    expect(text).not.toContain('$0.00001101');
+    expect(text).toContain('Creator bought 4.34% of supply at launch (2.11 NVDAc ≈ $474.10)');
+    expect(text).toContain('✏️ Profile editable by the creator');
+  });
+
+  // A row the indexer queued before it sent any of that is still in the outbox after a deploy.
+  it('still renders a launch queued before the indexer sent its opening price', async () => {
+    await enqueueAlerts(db, [{
+      kind: 'launch', token: TOKEN, blockNumber: BLOCK,
+      payload: { name: 'StockPair', symbol: 'STOCK', creator: CREATOR, stock: NVDAc, stockUsd8: '22469000000', txHash: '0xt1' },
+    }]);
+
+    expect((await dispatchOnce(deps())).posted).toBe(1);
+    const text = telegram.sent[0]?.text ?? '';
+    // Worked out from the launch row, not taken from the last trade.
+    expect(text).toContain('Opens at $0.00000225 · 💎 FDV $2.2K');
+    expect(text).not.toContain('$0.00001101');
+    expect(text).not.toContain('Creator bought');
+    expect(text).not.toContain('editable');
+  });
+
+  // Set at launch through the create form, or in an editable token's onchain profile; both land on
+  // the launch row. Web and X already fell back to it and Telegram did not.
+  it("links the launch's own Telegram on every card when there is no signed profile", async () => {
+    await updateLaunchMetadata(
+      db, TOKEN,
+      { description: null, imageUri: null, website: 'https://stockpair.test', twitter: null, telegram: 'https://t.me/stockpair' },
+      'ipfs://x',
+    );
+    await enqueueAlerts(db, [launchAlert(), tradeAlert('500000000')]);
+
+    expect((await dispatchOnce(deps())).posted).toBe(2);
+    expect(telegram.sent).toHaveLength(2);
+    for (const { text } of telegram.sent) {
+      expect(text).toContain('<a href="https://t.me/stockpair">TG</a>');
+      expect(text).toContain('<a href="https://stockpair.test">Web</a>');
+    }
+  });
+
+  it("prefers a signed profile's Telegram on a token whose profile is fixed onchain", async () => {
+    await updateLaunchMetadata(
+      db, TOKEN,
+      { description: null, imageUri: null, website: null, twitter: null, telegram: 'https://t.me/stockpair' },
+      'ipfs://x',
+    );
+    await upsertTokenProfile(db, {
+      token: TOKEN, description: null, imageUri: null, website: null, twitter: null, telegram: 'https://t.me/signed',
+      signer: CREATOR, signature: '0xsig', issuedAt: new Date('2026-09-10T00:00:00Z'),
+    });
+    await enqueueAlerts(db, [tradeAlert('500000000')]);
+
+    await dispatchOnce(deps());
+    expect(telegram.sent[0]?.text).toContain('<a href="https://t.me/signed">TG</a>');
+    expect(telegram.sent[0]?.text).not.toContain('t.me/stockpair');
+  });
+
+  // Changed onchain only, which the indexer writes to the launch row; the token page ignores a
+  // signed profile for it, and so does the channel.
+  it('links only the onchain profile of a token whose profile is editable', async () => {
+    await db.query('UPDATE launches SET metadata_editable = true WHERE token = $1', [TOKEN]);
+    await updateLaunchMetadata(
+      db, TOKEN,
+      { description: null, imageUri: null, website: 'https://onchain.test', twitter: null, telegram: 'https://t.me/onchain' },
+      'ipfs://x',
+    );
+    await upsertTokenProfile(db, {
+      token: TOKEN, description: null, imageUri: null, website: 'https://signed.test', twitter: 'https://x.com/signed',
+      telegram: 'https://t.me/signed', signer: CREATOR, signature: '0xsig', issuedAt: new Date('2026-09-10T00:00:00Z'),
+    });
+    await enqueueAlerts(db, [launchAlert()]);
+
+    await dispatchOnce(deps());
+    const text = telegram.sent[0]?.text ?? '';
+    expect(text).toContain('<a href="https://t.me/onchain">TG</a>');
+    expect(text).toContain('<a href="https://onchain.test">Web</a>');
+    for (const signed of ['t.me/signed', 'signed.test', 'x.com/signed']) expect(text).not.toContain(signed);
+  });
+
+  // Only the indexer migrates, and a card read on a database it has not reached yet fails; the
+  // rows have to still be there once it has.
+  it('keeps every row queued on a database the indexer has not migrated yet', async () => {
+    await enqueueAlerts(db, [launchAlert(), tradeAlert('500000000')]);
+    await db.exec('DROP TABLE metadata_updates CASCADE');
+
+    expect(await dispatchOnce(deps())).toMatchObject({ considered: 2, posted: 0, deferred: 2 });
+    expect(telegram.sent).toHaveLength(0);
+    expect(await listPendingAlerts(db)).toHaveLength(2);
+  });
+
+  // It is already a line on the launch card; a trade post as well says the same thing twice.
+  it("does not post the creator's buy in the launch transaction as a trade", async () => {
+    await enqueueAlerts(db, [launchAlert(), tradeAlert('500000000', { launchBuy: true }), tradeAlert('500000000', { launchBuy: false })]);
+
+    const result = await dispatchOnce(deps());
+    expect(result).toMatchObject({ considered: 3, posted: 2, skipped: 1, deferred: 0 });
+    expect(telegram.sent.filter((s) => s.text.includes('BUY'))).toHaveLength(1);
+    expect(await listPendingAlerts(db)).toHaveLength(0);
+  });
+
+  // Skipped whole, milestone included: the next real trade is the one that announces the level.
+  it('leaves the milestone for a later trade when the launch buy is all there is', async () => {
+    await enqueueAlerts(db, [tradeAlert('500000000', { launchBuy: true })]);
+
+    expect(await dispatchOnce(deps())).toMatchObject({ considered: 1, posted: 0, skipped: 1 });
+    expect(telegram.sent).toHaveLength(0);
+    expect(await readAlertMark(db, TOKEN, 'mcap')).toBeNull();
+    expect(await listPendingAlerts(db)).toHaveLength(0);
+  });
+
+  // A creator with an editable profile could otherwise post to the channel at will.
+  it('stays silent about a kind of row it does not announce', async () => {
+    await enqueueAlerts(db, [{ kind: 'profile' as never, token: TOKEN, blockNumber: BLOCK, payload: { contractUri: 'ipfs://y' } }]);
+
+    expect(await dispatchOnce(deps())).toMatchObject({ considered: 1, posted: 0, skipped: 1 });
+    expect(telegram.sent).toHaveLength(0);
   });
 
   it('posts a large trade and stays silent about a small one', async () => {

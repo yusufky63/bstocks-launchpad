@@ -1,4 +1,7 @@
+import { openingPriceUsd, SUPPLY_RAW } from '@stockpair/core';
 import type { AlertRow, MarketRow } from '@stockpair/core/db';
+
+import type { LaunchDetail } from './render';
 
 /**
  * What the channel says, and what it keeps to itself.
@@ -61,6 +64,119 @@ export function toMarket(row: MarketRow): Market {
   };
 }
 
+/** The parts of the market row a card's links come from. */
+export type LinkRowFacts = Pick<
+  MarketRow,
+  'metadata_editable' | 'website' | 'twitter' | 'telegram' | 'profile_website' | 'profile_twitter' | 'profile_telegram'
+>;
+
+export type Links = { website: string | null; twitter: string | null; telegram: string | null };
+
+/**
+ * Where a card's Web, X and TG links point, in the order the token page uses: the creator's signed
+ * profile field by field, then the launch row, which holds the profile JSON from the launch or, for
+ * an editable token, from its latest onchain update.
+ *
+ * An editable token is changed onchain only, so a signed profile never applies to it.
+ */
+export function toLinks(row: LinkRowFacts): Links {
+  const signed = row.metadata_editable ? null : row;
+  return {
+    website: signed?.profile_website ?? row.website ?? null,
+    twitter: signed?.profile_twitter ?? row.twitter ?? null,
+    // `?? null` as well: a row read before the launch row had this column carries undefined.
+    telegram: signed?.profile_telegram ?? row.telegram ?? null,
+  };
+}
+
+/** From `CreatorBought`. Raw amounts are decimal strings, because a bigint does not survive JSON. */
+export type CreatorBuyPayload = { stockInRaw: string; feeRaw: string; tokensOutRaw: string; supplyBps: number };
+
+/**
+ * What the indexer queues with a launch, beyond the name and symbol the market row also has.
+ *
+ * All optional: rows queued before buy-at-launch and editable profiles existed carry none of these,
+ * and one of them still in the outbox after a deploy has to render rather than wedge the queue.
+ */
+export type LaunchPayload = {
+  openingPriceUsd?: number | null;
+  creatorBuy?: CreatorBuyPayload | null;
+  metadataEditable?: boolean;
+};
+
+function rawAmount(value: unknown): bigint | null {
+  if (typeof value === 'string' && /^\d{1,78}$/u.test(value)) return BigInt(value);
+  if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) return BigInt(value);
+  return null;
+}
+
+function positive(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+/** The parts of the launch row a launch card falls back on. */
+export type LaunchRowFacts = Pick<
+  MarketRow,
+  | 'opening_sqrt_price_x96'
+  | 'token_is_currency0'
+  | 'stock_decimals'
+  | 'stock_usd8_at_launch'
+  | 'metadata_editable'
+  | 'metadata_locked_at'
+>;
+
+/** Recomputed from the launch row, for a payload queued before the indexer sent the figure. */
+function openingFromRow(row: LaunchRowFacts): number | null {
+  try {
+    return positive(
+      openingPriceUsd(
+        BigInt(row.opening_sqrt_price_x96),
+        row.token_is_currency0,
+        Number(row.stock_decimals),
+        BigInt(row.stock_usd8_at_launch),
+      ),
+    );
+  } catch {
+    return null;
+  }
+}
+
+function creatorBuyOf(value: unknown, stockDecimals: number, stockUsd: number | null): LaunchDetail['creatorBuy'] {
+  if (value === null || typeof value !== 'object') return null;
+  const buy = value as Record<string, unknown>;
+  const stockIn = rawAmount(buy.stockInRaw);
+  const tokensOut = rawAmount(buy.tokensOutRaw);
+  if (stockIn === null || tokensOut === null || tokensOut === 0n) return null;
+  // The indexer's figure when it sent one, so this card and the token page's "Dev buy" agree;
+  // otherwise the same floor it uses.
+  const sent = rawAmount(buy.supplyBps);
+  const supplyBps = Number(sent !== null && sent <= 10_000n ? sent : (tokensOut * 10_000n) / SUPPLY_RAW);
+  const amountStock = Number(stockIn) / 10 ** stockDecimals;
+  return { supplyBps, amountStock, valueUsd: stockUsd === null ? null : amountStock * stockUsd };
+}
+
+/**
+ * What a launch card says about the launch itself.
+ *
+ * The launch's facts come from the payload, fixed when the launch was indexed. The market row is
+ * read at send time, and by then a buy in the launch transaction has already moved its last price.
+ * Dollars use the Chainlink value the factory read at launch, not today's.
+ */
+export function toLaunch(row: LaunchRowFacts, payload: unknown): LaunchDetail {
+  const queued: LaunchPayload = payload !== null && typeof payload === 'object' ? payload : {};
+  const stockUsd = positive(Number(row.stock_usd8_at_launch) / 1e8);
+  const openingPrice = positive(queued.openingPriceUsd) ?? openingFromRow(row);
+  const chosen = typeof queued.metadataEditable === 'boolean' ? queued.metadataEditable : row.metadata_editable === true;
+  return {
+    openingPriceUsd: openingPrice,
+    openingFdvUsd: openingPrice === null ? null : openingPrice * SUPPLY,
+    creatorBuy: creatorBuyOf(queued.creatorBuy, Number(row.stock_decimals), stockUsd),
+    // A backlog can hold a card long enough for the creator to lock the profile first, and then
+    // "editable" would be false the moment it was posted.
+    metadataEditable: chosen && row.metadata_locked_at == null,
+  };
+}
+
 export type TradePayload = {
   side: 'buy' | 'sell';
   amountTokenRaw: string;
@@ -71,7 +187,17 @@ export type TradePayload = {
   blockTime: string;
   stockDecimals: number;
   stockUsd8: string | null;
+  /** The creator's buy inside the launch transaction. Absent on rows queued before it existed. */
+  launchBuy?: boolean;
 };
+
+/**
+ * The creator's buy at launch is already a line on the launch card. A trade post as well would
+ * announce the same buy twice, seconds apart.
+ */
+export function isLaunchBuy(payload: TradePayload): boolean {
+  return payload.launchBuy === true;
+}
 
 export type Thresholds = { minTradeUsd: number; minTradeShare: number; minTradeFloorUsd: number };
 

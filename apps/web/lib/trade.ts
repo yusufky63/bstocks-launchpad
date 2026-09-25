@@ -4,6 +4,8 @@ import { base } from 'viem/chains';
 import { stockPairRouterAbi } from '@stockpair/core';
 
 import { attributionCapabilities, withAttribution } from './attribution';
+import { txDeadline } from './deadline';
+import { revertErrorName } from './revert';
 import type { QuoteView } from './types';
 
 export type TradeState = 'IDLE' | 'CHECKING' | 'APPROVAL' | 'AWAITING_WALLET' | 'SUBMITTED' | 'CONFIRMING' | 'CONFIRMED' | 'FAILED';
@@ -16,26 +18,52 @@ export function minOutFor(amountOut: bigint, slippageBps: number): bigint {
   return (amountOut * (10_000n - bps)) / 10_000n;
 }
 
-/** A deadline `seconds` from now, in unix seconds, as the router expects. */
-export function deadlineIn(seconds: number, now = Date.now()): bigint {
-  return BigInt(Math.floor(now / 1000) + seconds);
-}
-
 /** Preset share of a balance (25/50/75/100) in raw units. */
 export function shareOf(balance: bigint, percent: number): bigint {
   const p = BigInt(Math.min(100, Math.max(0, Math.round(percent))));
   return (balance * p) / 100n;
 }
 
+const DECLINED = 'You declined the request in your wallet. Nothing was sent.';
+const SLIPPAGE = 'The price moved more than your slippage tolerance. Nothing was swapped; try again or raise the tolerance.';
+const EXPIRED = 'The transaction expired before it was mined. Nothing was swapped; try again.';
+const NOT_APPROVED = 'The contract is not approved for this amount yet.';
+const NO_BALANCE = 'Not enough balance to cover the amount plus gas.';
+const PARTIAL = 'The pool could not fill the whole amount. Nothing was swapped; try a smaller amount.';
+const PAUSED = 'Transfers of this token or its stock are paused right now. Nothing was swapped.';
+const POLICY = "The stock's transfer rules do not allow this wallet to make this swap. Nothing was swapped.";
+
+/** Custom errors by name, decoded from the revert data (v4's WrappedError unwrapped first). */
+const TRADE_ERRORS: Record<string, string> = {
+  PartialFill: PARTIAL,
+  TooLittleReceived: SLIPPAGE,
+  Expired: EXPIRED,
+  ERC20InsufficientAllowance: NOT_APPROVED,
+  SafeERC20FailedOperation: NOT_APPROVED,
+  ERC20InsufficientBalance: NO_BALANCE,
+  // B20 tokens (the stocks and every token launched here) revert with these instead.
+  InsufficientAllowance: NOT_APPROVED,
+  InsufficientBalance: NO_BALANCE,
+  ContractPaused: PAUSED,
+  PolicyForbids: POLICY,
+};
+
+export function isUserRejection(raw: string): boolean {
+  return /user rejected|user denied|rejected the request|denied transaction/iu.test(raw);
+}
+
 /** Turns wallet and contract errors into one line a person can act on. */
 export function describeTradeError(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err);
   const first = raw.split(/\r?\n/u)[0] ?? raw;
-  if (/user rejected|user denied|rejected the request|denied transaction/iu.test(raw)) return 'You declined the request in your wallet. Nothing was sent.';
-  if (/TooLittleReceived|slippage|amountOutMinimum|minAmountOut/iu.test(raw)) return 'The price moved more than your slippage tolerance. Nothing was swapped; try again or raise the tolerance.';
-  if (/Expired|deadline/iu.test(raw)) return 'The transaction expired before it was mined. Nothing was swapped; try again.';
-  if (/insufficient allowance|transfer amount exceeds allowance|STF|TRANSFER_FROM_FAILED/iu.test(raw)) return 'The router is not approved for this amount yet. Approve first, then swap.';
-  if (/insufficient funds|exceeds balance|transfer amount exceeds/iu.test(raw)) return 'Not enough balance to cover the amount plus gas.';
+  if (isUserRejection(raw)) return DECLINED;
+  const named = revertErrorName(err);
+  if (named && TRADE_ERRORS[named]) return TRADE_ERRORS[named];
+  if (/PartialFill/u.test(raw)) return PARTIAL;
+  if (/TooLittleReceived|slippage|amountOutMinimum|minAmountOut/iu.test(raw)) return SLIPPAGE;
+  if (/Expired|deadline/iu.test(raw)) return EXPIRED;
+  if (/insufficient allowance|transfer amount exceeds allowance|STF|TRANSFER_FROM_FAILED/iu.test(raw)) return NOT_APPROVED;
+  if (/insufficient funds|exceeds balance|transfer amount exceeds/iu.test(raw)) return NO_BALANCE;
   if (/chain|network/iu.test(raw) && /switch|mismatch|unsupported/iu.test(raw)) return 'Switch your wallet to Base, then try again.';
   return first.length > 200 ? `${first.slice(0, 200)}…` : first;
 }
@@ -46,7 +74,6 @@ export interface SwapParams {
   minOut: bigint;
   inputToken: Address;
   router: Address;
-  deadlineSeconds?: number;
 }
 
 export interface SwapHooks {
@@ -65,7 +92,7 @@ export interface SwapResult {
  * Whether the wallet can take approve + swap as one atomic batch (EIP-5792). Base Account and
  * wallets upgraded under EIP-7702 answer yes; extensions without the method answer no.
  */
-export async function walletIsAtomic(walletClient: WalletClient, account: Address): Promise<boolean> {
+export async function walletIsAtomic(walletClient: Pick<WalletClient, 'getCapabilities'>, account: Address): Promise<boolean> {
   try {
     const caps = (await walletClient.getCapabilities({ account, chainId: base.id })) as { atomic?: { status?: string } };
     return caps.atomic?.status === 'supported' || caps.atomic?.status === 'ready';
@@ -74,12 +101,18 @@ export async function walletIsAtomic(walletClient: WalletClient, account: Addres
   }
 }
 
-function swapCalldata(p: SwapParams, recipient: Address): Hex {
+function swapCalldata(p: SwapParams, recipient: Address, deadline: bigint): Hex {
   return encodeFunctionData({
     abi: stockPairRouterAbi,
     functionName: 'swapExactIn',
-    args: [p.quote.poolKey, p.quote.zeroForOne, p.amountIn, p.minOut, recipient, deadlineIn(p.deadlineSeconds ?? 180)],
+    args: [p.quote.poolKey, p.quote.zeroForOne, p.amountIn, p.minOut, recipient, deadline],
   });
+}
+
+/** Ten minutes from the later of the latest block and this device's clock, read right now. */
+export async function freshDeadline(publicClient: Pick<PublicClient, 'getBlock'>, nowMs = Date.now()): Promise<bigint> {
+  const block = await publicClient.getBlock({ blockTag: 'latest' });
+  return txDeadline(block.timestamp, nowMs);
 }
 
 /**
@@ -87,9 +120,17 @@ function swapCalldata(p: SwapParams, recipient: Address): Hex {
  * Simulation runs before the wallet opens so a revert is a message, not a lost gas fee. Straight
  * after our own approval a lagging RPC can still report the old allowance, so that one case is
  * retried a few times before it is treated as real.
+ *
+ * The swap calldata, and so its deadline, is built only once nothing else is left to wait for:
+ * after the approval's receipt, or just before the batch goes to the wallet. Building it first let
+ * a slow approval eat the deadline before the swap was even signed.
  */
 export async function executeSwap(
-  ctx: { account: Address; walletClient: WalletClient; publicClient: PublicClient },
+  ctx: {
+    account: Address;
+    walletClient: Pick<WalletClient, 'getCapabilities' | 'sendCalls' | 'waitForCallsStatus' | 'sendTransaction'>;
+    publicClient: Pick<PublicClient, 'readContract' | 'getBlock' | 'call' | 'waitForTransactionReceipt'>;
+  },
   params: SwapParams,
   hooks: SwapHooks = {},
 ): Promise<SwapResult> {
@@ -98,10 +139,10 @@ export async function executeSwap(
   const allowance = await publicClient.readContract({ address: params.inputToken, abi: erc20Abi, functionName: 'allowance', args: [account, params.router] });
   const needsApproval = allowance < params.amountIn;
   const approveData = encodeFunctionData({ abi: erc20Abi, functionName: 'approve', args: [params.router, params.amountIn] });
-  const swapData = swapCalldata(params, account);
 
   if (needsApproval && (await walletIsAtomic(walletClient, account))) {
     hooks.onMode?.('batched');
+    const swapData = swapCalldata(params, account, await freshDeadline(publicClient));
     hooks.onState?.('AWAITING_WALLET');
     const { id } = await walletClient.sendCalls({
       account,
@@ -134,6 +175,7 @@ export async function executeSwap(
     if (approveReceipt.status !== 'success') throw new Error('The approval reverted.');
   }
 
+  const swapData = swapCalldata(params, account, await freshDeadline(publicClient));
   // Simulate exactly what gets sent, suffix included.
   await simulateAfterApproval(publicClient, account, { to: params.router, data: withAttribution(swapData) }, needsApproval ? 4 : 0);
 
@@ -148,16 +190,22 @@ export async function executeSwap(
   return { txHash: hash, mode: 'sequential' };
 }
 
-async function simulateAfterApproval(publicClient: PublicClient, account: Address, call: { to: Address; data: Hex }, retries: number): Promise<void> {
+export async function simulateAfterApproval(
+  publicClient: Pick<PublicClient, 'call'>,
+  account: Address,
+  call: { to: Address; data: Hex; value?: bigint },
+  retries: number,
+  delayMs = 1200,
+): Promise<void> {
   for (let i = 0; ; i++) {
     try {
-      await publicClient.call({ account, to: call.to, data: call.data });
+      await publicClient.call({ account, to: call.to, data: call.data, ...(call.value ? { value: call.value } : {}) });
       return;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       const staleAllowance = /allowance|STF|TRANSFER_FROM_FAILED|reverted/iu.test(msg);
       if (staleAllowance && i < retries) {
-        await new Promise((r) => setTimeout(r, 1200));
+        await new Promise((r) => setTimeout(r, delayMs));
         continue;
       }
       throw err;

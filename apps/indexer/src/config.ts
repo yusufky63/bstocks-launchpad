@@ -2,12 +2,15 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import process from 'node:process';
 
-import { readDeployment, type StockPairDeployment } from '@stockpair/core';
+import { DeploymentListError, parseDeployments, type StockPairDeployment } from '@stockpair/core';
 import { z } from 'zod';
 
 export type IndexerConfig = Readonly<{
   databaseUrl: string;
   rpcUrls: readonly string[];
+  /** Every deployment, oldest first. Earlier ones stay live, so all of them are indexed. */
+  deployments: readonly StockPairDeployment[];
+  /** The newest deployment: the only one that takes new launches, and the one stocks are mirrored from. */
   deployment: StockPairDeployment;
   confirmations: number;
   pollMs: number;
@@ -44,15 +47,23 @@ export function loadEnvFiles(cwd = process.cwd()): void {
 
 export function loadConfig(env: Readonly<Record<string, string | undefined>> = process.env): IndexerConfig {
   const parsed = schema.parse(env);
-  const deployment = readDeployment(env, 'STOCKPAIR');
-  if (!deployment) {
-    throw new Error(
-      'STOCKPAIR_FACTORY, STOCKPAIR_HOOK, STOCKPAIR_ROUTER and STOCKPAIR_DEPLOY_BLOCK are required.',
-    );
+  const help =
+    'Set STOCKPAIR_DEPLOYMENTS, a JSON list of {factory, hook, router, deployBlock} oldest first, or ' +
+    'STOCKPAIR_FACTORY, STOCKPAIR_HOOK, STOCKPAIR_ROUTER and STOCKPAIR_DEPLOY_BLOCK. A list that does ' +
+    'not parse, repeats a factory or hook, or goes back in deploy block is refused whole.';
+  let deployments: readonly StockPairDeployment[];
+  try {
+    deployments = parseDeployments(env, 'STOCKPAIR');
+  } catch (error) {
+    if (error instanceof DeploymentListError) throw new Error(`Refusing to start: ${error.message} ${help}`);
+    throw error;
   }
+  const deployment = deployments.at(-1);
+  if (!deployment) throw new Error(help);
   return Object.freeze({
     databaseUrl: parsed.DATABASE_URL,
     rpcUrls: [parsed.BASE_RPC_URL, ...(parsed.BASE_RPC_URL_FALLBACK ? [parsed.BASE_RPC_URL_FALLBACK] : [])],
+    deployments,
     deployment,
     confirmations: parsed.INDEXER_CONFIRMATIONS,
     pollMs: parsed.INDEXER_POLL_MS,

@@ -47,10 +47,16 @@ jobs:
       - uses: foundry-rs/foundry-toolchain@v1
         with:
           version: stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - name: Install dependencies (same layout as foundry.toml remappings)
         run: |
           forge install foundry-rs/forge-std@v1.9.7 --no-git
           forge install OpenZeppelin/openzeppelin-contracts@v5.2.0 --no-git
           forge install uniswap/v4-periphery --no-git
       - run: forge build --sizes
+      # The checked-in TypeScript ABI must be exactly what this build produces.
+      - name: ABI in packages/core matches the contracts
+        run: node ../../scripts/gen-abi.mjs --check
       - run: forge test -vv

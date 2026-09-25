@@ -96,6 +96,16 @@ export function formatPercent(value: number | null): string {
   return `${value >= 0 ? '+' : ''}${value.toFixed(1)}%`;
 }
 
+/**
+ * A share of the fixed supply, from whole basis points. A buy under one basis point still bought
+ * something, and "0%" would say it bought nothing.
+ */
+export function formatShare(bps: number): string {
+  if (!Number.isFinite(bps) || bps < 0) return '—';
+  if (bps < 1) return '<0.01%';
+  return `${(bps / 100).toFixed(2).replace(/\.?0+$/u, '')}%`;
+}
+
 /** How long ago, in the coarsest unit that still says something. */
 export function age(from: string | Date, now = new Date()): string {
   const ms = now.getTime() - new Date(from).getTime();
@@ -178,6 +188,17 @@ export type Snapshot = {
   twitter: string | null;
   telegram: string | null;
   poolId: string;
+};
+
+/** What only a launch card says: the launch's own facts, fixed when it happened. */
+export type LaunchDetail = {
+  /** At the opening tick, priced with the Chainlink value the factory read at launch. */
+  openingPriceUsd: number | null;
+  openingFdvUsd: number | null;
+  /** The creator's buy inside the launch transaction; `amountStock` includes the swap fee. */
+  creatorBuy: { supplyBps: number; amountStock: number; valueUsd: number | null } | null;
+  /** The creator chose a profile they can change later, and has not locked it yet. */
+  metadataEditable: boolean;
 };
 
 /** Both chart sites are in the text row; a button for one of them would just pick a favourite. */
@@ -294,20 +315,31 @@ export function tradePost(
  * Reusing the trade card here printed "24h — · 📊 — · 🅑 0 🅢 0" and "0 holders": a row of dashes
  * under a headline, because a token that has just been created has no day behind it, no holders
  * outside the pool and no high to have reached. What it does have is an opening price, a stock it
- * is paired against, and a fee schedule that matters for exactly twenty seconds.
+ * is paired against, and whatever the creator chose at launch: a buy of their own in the same
+ * transaction, and a profile they can still change.
+ *
+ * The price is the opening one from `launch`, never the snapshot's. A creator buy has already moved
+ * the last trade price by the time this is sent, and announcing that as "opens at" would print the
+ * price after the creator's buy as the price everyone else could have had.
  */
-export function launchPost(appUrl: string, facts: TokenFacts, snap: Snapshot): Post {
+export function launchPost(appUrl: string, facts: TokenFacts, snap: Snapshot, launch: LaunchDetail): Post {
   const lines = [
     `🆕 ${a(`${appUrl}/token/${facts.token}`, facts.name)} · ${b(`$${facts.symbol}`)}`,
     `🌐 Base @ Uniswap v4 · trades against ${a(basescan(facts.stockAddress), facts.stockSymbol)}`,
     '',
-    `💰 Opens at ${esc(formatUsd(snap.priceUsd))} · 💎 FDV ${esc(formatUsdCompact(snap.fdvUsd))}`,
-    esc('🔒 1,000,000,000 supply, all of it in the pool and no way to withdraw it'),
-    // The single most useful thing to say in a token's first minute: a sniper in the launch block
-    // hands almost everything to the creator, and a buyer who waits half a minute does not.
-    esc('⏱️ Swap fee starts at 99% and falls to 1% over 20 seconds'),
-    `👤 by ${a(basescan(snap.creator), snap.creatorName)}`,
+    `💰 Opens at ${esc(formatUsd(launch.openingPriceUsd))} · 💎 FDV ${esc(formatUsdCompact(launch.openingFdvUsd))}`,
+    // "Put in", not "in": a creator buy takes some of it straight back out in the same transaction.
+    esc('🔒 1,000,000,000 supply, all of it put in the pool and no way to withdraw it'),
   ];
+  const bought = launch.creatorBuy;
+  if (bought) {
+    const value = bought.valueUsd === null ? '' : ` ≈ ${formatUsd(bought.valueUsd)}`;
+    lines.push(
+      esc(`🧑‍💻 Creator bought ${formatShare(bought.supplyBps)} of supply at launch (${formatAmount(bought.amountStock)} ${facts.stockSymbol}${value})`),
+    );
+  }
+  if (launch.metadataEditable) lines.push(esc('✏️ Profile editable by the creator'));
+  lines.push(`👤 by ${a(basescan(snap.creator), snap.creatorName)}`);
 
   const tools = [
     a(snap.website, 'Web'),

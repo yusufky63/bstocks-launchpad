@@ -1,6 +1,17 @@
 import { describe, expect, it } from 'vitest';
 
-import { isNewHigh, judgeTrade, nextMilestone, type Market, type TradePayload } from '../src/policy';
+import {
+  isLaunchBuy,
+  isNewHigh,
+  judgeTrade,
+  nextMilestone,
+  toLaunch,
+  toLinks,
+  type LaunchRowFacts,
+  type LinkRowFacts,
+  type Market,
+  type TradePayload,
+} from '../src/policy';
 
 const LIMITS = { minTradeUsd: 500, minTradeShare: 0.15, minTradeFloorUsd: 100 };
 
@@ -140,5 +151,191 @@ describe('new highs', () => {
     expect(isNewHigh(1.01, 1)).toBe(false);
     expect(isNewHigh(null, 1)).toBe(false);
     expect(isNewHigh(1.5, 0)).toBe(false);
+  });
+});
+
+/**
+ * Opens at 1e-8 NVDAc per token either way round: 2^96 / 1e9 is a raw price of 1e-18 stock per
+ * token with the token as currency0, and 2^96 · 1e9 is 1e18 tokens per stock with it as currency1.
+ * At $224.69 that is $0.0000022469 a token and an FDV of $2,246.90.
+ */
+const SQRT_TOKEN0 = ((1n << 96n) / 1_000_000_000n).toString();
+const SQRT_TOKEN1 = ((1n << 96n) * 1_000_000_000n).toString();
+const OPENING_USD = 0.0000022469;
+
+function launchRow(over: Partial<LaunchRowFacts> = {}): LaunchRowFacts {
+  return {
+    opening_sqrt_price_x96: SQRT_TOKEN0,
+    token_is_currency0: true,
+    stock_decimals: 8,
+    stock_usd8_at_launch: '22469000000',
+    metadata_editable: false,
+    metadata_locked_at: null,
+    ...over,
+  };
+}
+
+/** 2.11 NVDAc in, 4.34% of the billion out: the shape the indexer queues from CreatorBought. */
+const BUY = {
+  stockInRaw: '211000000',
+  feeRaw: '2110000',
+  tokensOutRaw: (434n * 10n ** 23n).toString(),
+  supplyBps: 434,
+};
+
+describe('what a launch card says about the launch', () => {
+  // The market row is read at send time, and a buy in the launch transaction has already moved
+  // its last price by then.
+  it("takes the opening price from what the indexer queued, and the FDV from that", () => {
+    const launch = toLaunch(launchRow(), { openingPriceUsd: 0.0000052, creatorBuy: null, metadataEditable: false });
+    expect(launch.openingPriceUsd).toBe(0.0000052);
+    expect(launch.openingFdvUsd).toBeCloseTo(5_200, 6);
+  });
+
+  // A row queued before the indexer sent these fields is still in the outbox after a deploy.
+  it('works the opening price out from the launch row for a payload queued before it was sent', () => {
+    for (const row of [launchRow(), launchRow({ opening_sqrt_price_x96: SQRT_TOKEN1, token_is_currency0: false })]) {
+      const launch = toLaunch(row, { name: 'StockPair', symbol: 'STOCK', stockUsd8: '22469000000' });
+      expect(launch.openingPriceUsd! / OPENING_USD).toBeCloseTo(1, 9);
+      expect(launch.openingFdvUsd! / (OPENING_USD * 1e9)).toBeCloseTo(1, 9);
+      expect(launch.creatorBuy).toBeNull();
+      expect(launch.metadataEditable).toBe(false);
+    }
+  });
+
+  it('survives a payload that is not an object at all', () => {
+    for (const payload of [null, undefined, 'launch', 7, []]) {
+      const launch = toLaunch(launchRow(), payload);
+      expect(launch.openingPriceUsd! / OPENING_USD).toBeCloseTo(1, 9);
+      expect(launch.creatorBuy).toBeNull();
+    }
+  });
+
+  it('falls back to the row when the queued price is not a price', () => {
+    for (const openingPriceUsd of [0, -1, Number.NaN, '0.0000052', null]) {
+      expect(toLaunch(launchRow(), { openingPriceUsd }).openingPriceUsd! / OPENING_USD).toBeCloseTo(1, 9);
+    }
+  });
+
+  it('says nothing about a price it cannot work out', () => {
+    const launch = toLaunch(launchRow({ stock_usd8_at_launch: '0', opening_sqrt_price_x96: 'x' }), {});
+    expect(launch.openingPriceUsd).toBeNull();
+    expect(launch.openingFdvUsd).toBeNull();
+  });
+
+  // Priced with the Chainlink value the factory read at launch, not today's quote.
+  it("prices the creator's buy at the stock's value at launch", () => {
+    const launch = toLaunch(launchRow(), { creatorBuy: BUY });
+    expect(launch.creatorBuy).not.toBeNull();
+    expect(launch.creatorBuy!.supplyBps).toBe(434);
+    expect(launch.creatorBuy!.amountStock).toBeCloseTo(2.11, 12);
+    expect(launch.creatorBuy!.valueUsd).toBeCloseTo(2.11 * 224.69, 9);
+  });
+
+  it('reads a stock of any precision', () => {
+    const launch = toLaunch(launchRow({ stock_decimals: 18 }), { creatorBuy: { ...BUY, stockInRaw: '2110000000000000000' } });
+    expect(launch.creatorBuy!.amountStock).toBeCloseTo(2.11, 12);
+  });
+
+  it('leaves the dollar figure out rather than print one with no stock price behind it', () => {
+    expect(toLaunch(launchRow({ stock_usd8_at_launch: '0' }), { creatorBuy: BUY }).creatorBuy!.valueUsd).toBeNull();
+  });
+
+  // The indexer's figure keeps this card and the token page's "Dev buy" in agreement.
+  it("uses the indexer's share, and the same floor when it did not send one", () => {
+    expect(toLaunch(launchRow(), { creatorBuy: { ...BUY, supplyBps: '434' } }).creatorBuy!.supplyBps).toBe(434);
+    const tokensOutRaw = (4_349n * 10n ** 22n).toString(); // 4.349%
+    for (const supplyBps of [undefined, 'lots', 20_000, -1]) {
+      expect(toLaunch(launchRow(), { creatorBuy: { ...BUY, tokensOutRaw, supplyBps } }).creatorBuy!.supplyBps).toBe(434);
+    }
+  });
+
+  it('shows no buy rather than a wrong one when the queued buy does not parse', () => {
+    for (const creatorBuy of [
+      { ...BUY, stockInRaw: 'abc' },
+      { ...BUY, stockInRaw: '-5' },
+      { ...BUY, tokensOutRaw: '0' },
+      { ...BUY, tokensOutRaw: undefined },
+      'bought',
+      null,
+    ]) {
+      expect(toLaunch(launchRow(), { creatorBuy }).creatorBuy).toBeNull();
+    }
+  });
+
+  it('says the profile is editable when the creator chose it', () => {
+    expect(toLaunch(launchRow(), { metadataEditable: true }).metadataEditable).toBe(true);
+    expect(toLaunch(launchRow(), { metadataEditable: false }).metadataEditable).toBe(false);
+    // Nothing queued: the launch row is the record of the choice.
+    expect(toLaunch(launchRow({ metadata_editable: true }), {}).metadataEditable).toBe(true);
+  });
+
+  // A backlog can hold a card long enough for the creator to lock the profile before it goes out.
+  it('does not call a profile editable once it has been locked', () => {
+    const locked = launchRow({ metadata_editable: true, metadata_locked_at: new Date('2026-09-25T00:00:00Z') });
+    expect(toLaunch(locked, { metadataEditable: true }).metadataEditable).toBe(false);
+  });
+});
+
+/** A token with no signed profile: whatever its launch JSON said, and nothing else. */
+function linkRow(over: Partial<LinkRowFacts> = {}): LinkRowFacts {
+  return {
+    metadata_editable: false,
+    website: 'https://stockpair.test',
+    twitter: 'https://x.com/stockpair',
+    telegram: 'https://t.me/stockpair',
+    profile_website: null,
+    profile_twitter: null,
+    profile_telegram: null,
+    ...over,
+  };
+}
+
+describe("where a card's links point", () => {
+  // The Telegram link from the launch JSON used to be dropped while Web and X fell back to it.
+  it('falls back to the launch row for Telegram, as it does for the website and X', () => {
+    expect(toLinks(linkRow())).toEqual({
+      website: 'https://stockpair.test',
+      twitter: 'https://x.com/stockpair',
+      telegram: 'https://t.me/stockpair',
+    });
+  });
+
+  it('lets a signed profile override the launch row field by field', () => {
+    const links = toLinks(linkRow({ profile_telegram: 'https://t.me/signed', profile_website: 'https://signed.test' }));
+    expect(links).toEqual({ website: 'https://signed.test', twitter: 'https://x.com/stockpair', telegram: 'https://t.me/signed' });
+  });
+
+  // Its onchain updates land on the launch row, and a signed profile never applies to it.
+  it('reads only the launch row for a token with an editable profile', () => {
+    const links = toLinks(
+      linkRow({
+        metadata_editable: true,
+        telegram: 'https://t.me/onchain',
+        profile_website: 'https://signed.test',
+        profile_twitter: 'https://x.com/signed',
+        profile_telegram: 'https://t.me/signed',
+      }),
+    );
+    expect(links).toEqual({ website: 'https://stockpair.test', twitter: 'https://x.com/stockpair', telegram: 'https://t.me/onchain' });
+  });
+
+  // Tokens from before a launch row carried Telegram keep the links they had, and show no dead one.
+  it('keeps what an older token had and leaves out what it never gave', () => {
+    const old = { ...linkRow({ website: null, twitter: null, profile_twitter: 'https://x.com/old' }), telegram: undefined } as unknown as LinkRowFacts;
+    expect(toLinks(old)).toEqual({ website: null, twitter: 'https://x.com/old', telegram: null });
+    expect(toLinks(linkRow({ telegram: null, profile_telegram: 'https://t.me/old' })).telegram).toBe('https://t.me/old');
+  });
+});
+
+describe("the creator's buy at launch", () => {
+  // Already a line on the launch card; a trade post as well would announce the same buy twice.
+  it('is not a trade post of its own', () => {
+    expect(isLaunchBuy(trade('500000000', { launchBuy: true }))).toBe(true);
+  });
+
+  it('leaves every other trade alone, including ones queued before the flag existed', () => {
+    expect(isLaunchBuy(trade('500000000', { launchBuy: false }))).toBe(false);
+    expect(isLaunchBuy(trade('500000000'))).toBe(false);
   });
 });

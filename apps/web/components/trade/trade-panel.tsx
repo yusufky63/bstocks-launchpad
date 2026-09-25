@@ -13,10 +13,11 @@ import { ConnectButton } from '@/components/layout/connect-button';
 import { Banner } from '@/components/ui/display';
 import { AmountInput, Segmented } from '@/components/ui/controls';
 import { Button, KeyValue, cx } from '@/components/ui/primitives';
+import { deploymentOf } from '@/lib/deployments';
 import { publicEnv } from '@/lib/env';
 import { bpsToPct, formatPct, formatRatio, formatUsd } from '@/lib/format';
 import { qk, useQuote } from '@/lib/queries';
-import { useSlippage } from '@/lib/settings';
+import { impactLevel, useSlippage } from '@/lib/settings';
 import { minOutFor, shareOf } from '@/lib/trade';
 import type { MarketView } from '@/lib/types';
 
@@ -27,7 +28,8 @@ const PCT_CHIPS = [25, 50, 75, 100];
 
 /** The most important interaction in the app: amount first, live executable quote, sticky CTA. */
 export function TradePanel({ market, initialSide = 'buy', onTraded, className }: { market: MarketView; initialSide?: 'buy' | 'sell'; onTraded?: () => void; className?: string }) {
-  const deployment = publicEnv.deployment;
+  // Trades go through the router of the deployment that launched this token, not the newest one.
+  const deployment = deploymentOf(publicEnv.deployments, market);
   const { address, isConnected, chainId } = useAccount();
   const queryClient = useQueryClient();
   const [side, setSide] = useState<'buy' | 'sell'>(initialSide);
@@ -215,14 +217,13 @@ export function TradePanel({ market, initialSide = 'buy', onTraded, className }:
                 </span>
               </div>
               <KeyValue k="Price" v={formatRatio(q.executionPrice, `${market.stock.symbol}/${market.symbol}`)} />
-              <KeyValue k="Price impact" v={<span className={cx((q.priceImpactPercent ?? 0) > 5 && 'text-warning-fg')}>{formatPct(q.priceImpactPercent, { sign: true })}</span>} />
-              <KeyValue k={`Fee · in ${market.stock.symbol}`} v={<span className={cx(q.feeBps > 100 && 'text-warning-fg')}>{bpsToPct(q.feeBps)}{q.feeBps > 100 ? ' · anti-snipe' : ''}</span>} />
+              <KeyValue k="Price impact" v={<span className={cx(impactLevel(q.priceImpactPercent) === 'warn' && 'text-warning-fg', impactLevel(q.priceImpactPercent) === 'severe' && 'text-danger-fg')}>{formatPct(q.priceImpactPercent, { sign: true })}</span>} />
+              <KeyValue k={`Fee · in ${market.stock.symbol}`} v={bpsToPct(q.feeBps)} />
               <KeyValue k="Minimum received" v={`${formatAmount(minOutFor(BigInt(q.amountOut), slippageBps), outputDecimals, buy ? 2 : 6)} ${outputSymbol}`} />
             </div>
           )}
         </div>
 
-        {q && q.feeBps > 100 && <Banner tone="warning">Anti-snipe window: the fee is {bpsToPct(q.feeBps)} for a few more seconds, then 1%.</Banner>}
         {lastTx && (
           <Banner tone="positive">
             Swap confirmed.{' '}
@@ -231,7 +232,7 @@ export function TradePanel({ market, initialSide = 'buy', onTraded, className }:
             </a>
           </Banner>
         )}
-        {!deployment && <Banner tone="danger">Contracts are not configured on this server.</Banner>}
+        {!deployment && <Banner tone="danger">{publicEnv.deployments.length > 0 ? 'The contracts this token was launched with are not configured on this site.' : 'Contracts are not configured on this server.'}</Banner>}
 
         {!isConnected ? (
           <ConnectButton full size="lg" />
@@ -246,6 +247,7 @@ export function TradePanel({ market, initialSide = 'buy', onTraded, className }:
         <p className="text-[12px] text-ink-muted">
           Pool {market.symbol}/{market.stock.symbol} on Uniswap v4 · 1% fee in {market.stock.symbol}, 70% to the creator · liquidity locked forever.
         </p>
+        <p className="text-[12px] text-ink-secondary border-t border-line pt-3">Anyone can launch a token here. Check the creator&apos;s holdings, the holders and a live sell quote before you buy.</p>
       </div>
 
       {q && amountIn !== null && deployment && quoteMatches && (

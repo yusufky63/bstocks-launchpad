@@ -1,7 +1,7 @@
 import { isAddress, isHex, type Address, type Hex } from 'viem';
 import { z } from 'zod';
 
-import { readTokenProfile } from '@stockpair/core/db';
+import { readMarket, readTokenProfile } from '@stockpair/core/db';
 
 import { error, json, parseAddressParam } from '@/lib/api.server';
 import { getDb } from '@/lib/db.server';
@@ -37,11 +37,16 @@ export async function GET(_request: Request, { params }: Context): Promise<Respo
 /**
  * Creator-signed profile update. Multipart: a `payload` JSON field (the signed fields, signer and
  * signature) plus an optional `image` file whose keccak256 must equal the signed imageHash.
+ *
+ * Tokens launched with an editable profile are refused outright (409): their profile changes
+ * onchain only, and one editing path per token keeps what the page shows equal to what the token says.
  */
 export async function POST(request: Request, { params }: Context): Promise<Response> {
   const { address } = await params;
   const token = parseAddressParam(address);
   if (!token) return error(400, 'INVALID_ADDRESS', 'Token address is malformed.');
+  const launch = await readMarket(await getDb(), token);
+  if (launch?.metadata_editable) return error(409, 'ONCHAIN_PROFILE', "This token's profile lives onchain; update it from the token page.");
 
   let form: FormData;
   try {

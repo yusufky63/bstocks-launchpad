@@ -7,10 +7,12 @@ import { base } from 'wagmi/chains';
 
 import { formatAmount } from '@stockpair/core';
 
+import { Checkbox } from '@/components/ui/controls';
 import { Banner, TxLink, TxProgress } from '@/components/ui/display';
-import { Button, KeyValue } from '@/components/ui/primitives';
+import { Button, KeyValue, cx } from '@/components/ui/primitives';
 import { Sheet } from '@/components/ui/sheet';
 import { bpsToPct, formatPct, formatRatio, formatUsd } from '@/lib/format';
+import { impactLevel, slippageLevel } from '@/lib/settings';
 import { BUSY_STATES, describeTradeError, executeSwap, minOutFor, type TradeState } from '@/lib/trade';
 import type { MarketView, QuoteView } from '@/lib/types';
 
@@ -46,6 +48,7 @@ export function TradeReviewSheet({ open, onClose, onDone, market, quote, amountI
   const [txHash, setTxHash] = useState<Hash | undefined>();
   const [approvalHash, setApprovalHash] = useState<Hash | undefined>();
   const [mode, setMode] = useState<'batched' | 'sequential' | null>(null);
+  const [impactAck, setImpactAck] = useState(false);
   const doneReported = useRef(false);
 
   const buy = quote.side === 'buy';
@@ -60,6 +63,10 @@ export function TradeReviewSheet({ open, onClose, onDone, market, quote, amountI
   const stockAmount = Number(buy ? amountIn : amountOut) / 10 ** market.stock.decimals;
   const usdValue = stockUsd === null ? null : stockAmount * stockUsd;
   const busy = BUSY_STATES.includes(state);
+  const impact = impactLevel(quote.priceImpactPercent);
+  const impactPct = formatPct(quote.priceImpactPercent, { sign: false });
+  // Price impact never blocks a trade by itself; at the severe tier it takes one deliberate tick.
+  const needsAck = impact === 'severe' && !impactAck;
 
   const reset = useCallback(() => {
     setState('IDLE');
@@ -67,6 +74,7 @@ export function TradeReviewSheet({ open, onClose, onDone, market, quote, amountI
     setTxHash(undefined);
     setApprovalHash(undefined);
     setMode(null);
+    setImpactAck(false);
     doneReported.current = false;
   }, []);
 
@@ -125,7 +133,7 @@ export function TradeReviewSheet({ open, onClose, onDone, market, quote, amountI
       );
     if (state === 'IDLE')
       return (
-        <Button full size="lg" variant={buy ? 'primary' : 'ink'} onClick={() => void run()}>
+        <Button full size="lg" variant={buy ? 'primary' : 'ink'} disabled={needsAck} onClick={() => void run()}>
           {buy ? `Buy ${market.symbol} for ${formatAmount(amountIn, inputDecimals, 6)} ${inputSymbol}` : `Sell ${formatAmount(amountIn, inputDecimals, 2)} ${market.symbol}`}
         </Button>
       );
@@ -157,20 +165,31 @@ export function TradeReviewSheet({ open, onClose, onDone, market, quote, amountI
         <div>
           <KeyValue k="Value" v={usdValue === null ? `${formatRatio(stockAmount)} ${market.stock.symbol}` : `${formatUsd(usdValue)}${market.stockFeedStatus !== 'live' ? ' · last close' : ''}`} />
           <KeyValue k="Price" v={formatRatio(quote.executionPrice, `${market.stock.symbol} / ${market.symbol}`)} />
-          <KeyValue k="Price impact" v={formatPct(quote.priceImpactPercent, { sign: true })} />
-          <KeyValue k={`Fee · in ${market.stock.symbol}`} v={`${bpsToPct(quote.feeBps)}${quote.feeBps > 100 ? ' · anti-snipe' : ''}`} />
+          <KeyValue k="Price impact" v={<span className={cx(impact === 'warn' && 'text-warning-fg', impact === 'severe' && 'text-danger-fg')}>{formatPct(quote.priceImpactPercent, { sign: true })}</span>} />
+          <KeyValue k={`Fee · in ${market.stock.symbol}`} v={bpsToPct(quote.feeBps)} />
           <KeyValue k="Minimum received" v={`${formatAmount(minOut, outputDecimals, buy ? 2 : 6)} ${outputSymbol}`} />
-          <KeyValue k="Slippage tolerance" v={bpsToPct(slippageBps)} />
+          <KeyValue k="Slippage tolerance" v={<span className={cx(slippageLevel(slippageBps) === 'high' && 'text-warning-fg')}>{bpsToPct(slippageBps)}</span>} />
           <KeyValue k="Network" v="Base" />
           <KeyValue k="Execution" v={mode === 'batched' ? 'Approve + swap · one confirmation' : mode === 'sequential' ? 'Approve, then swap' : '—'} />
         </div>
 
-        {quote.feeBps > 100 && state === 'IDLE' && (
+        {slippageLevel(slippageBps) === 'high' && state === 'IDLE' && (
           <Banner tone="warning">
-            This pool is less than twenty seconds old: the anti-snipe fee is {bpsToPct(quote.feeBps)} right now and falls to 1% at launch + 20 s. Waiting a moment is much cheaper.
+            Slippage is {bpsToPct(slippageBps)}. You accept as little as {formatAmount(minOut, outputDecimals, buy ? 2 : 6)} {outputSymbol}, {bpsToPct(slippageBps)} below the quote.
           </Banner>
         )}
-        {quote.priceImpactPercent !== null && quote.priceImpactPercent > 5 && state === 'IDLE' && <Banner tone="warning">Price impact above 5%: this order moves the pool by {formatPct(quote.priceImpactPercent, { sign: false })}.</Banner>}
+        {impact === 'warn' && state === 'IDLE' && <Banner tone="warning">Price impact above 5%: this order moves the pool by {impactPct}.</Banner>}
+        {impact === 'severe' && state === 'IDLE' && (
+          <Banner tone="danger">
+            <span className="block">
+              Very high price impact: this trade moves the price by {impactPct}.{' '}
+              {buy ? `You get far fewer tokens per ${market.stock.symbol} than the current price suggests.` : `You get far less ${market.stock.symbol} per ${market.symbol} than the current price suggests.`}
+            </span>
+            <Checkbox checked={impactAck} onChange={setImpactAck} className="mt-2.5">
+              I understand the price impact
+            </Checkbox>
+          </Banner>
+        )}
 
         {state !== 'IDLE' && state !== 'FAILED' && (
           <div className="border border-line rounded-[8px] p-3 flex flex-col gap-2">

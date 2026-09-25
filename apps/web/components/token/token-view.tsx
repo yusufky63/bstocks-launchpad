@@ -15,14 +15,16 @@ import { AddressLabel, AnimatedNumber, Banner, PriceChange, TimeAgo, TxLink, Nam
 import { Badge, Button, KeyValue, Module, Skeleton, StatStrip, cx } from '@/components/ui/primitives';
 import { Sheet, StickyPanel } from '@/components/ui/sheet';
 import { bpsToPct, formatDateTime, formatNumber, formatPct, formatRatio, formatUsd, shortAddress } from '@/lib/format';
+import { devBuyTier } from '@/lib/launch';
 import { qk, useSwaps, useToken } from '@/lib/queries';
 import { useIsDesktop } from '@/lib/settings';
 import { telegramHandle } from '@/lib/profile';
 import { twitterHandle } from '@/lib/twitter';
-import type { TokenResponse } from '@/lib/types';
+import type { LaunchInfo, MarketView, TokenResponse } from '@/lib/types';
 
 import { ChartModule } from './chart-module';
 import { EditProfile } from './edit-profile';
+import { OnchainProfile } from './onchain-profile';
 import { TokenRecords } from './token-records';
 
 /**
@@ -91,6 +93,7 @@ export function TokenView({ address, initialData }: { address: string; initialDa
 
   const market = view.market;
   const details = view.details;
+  const { launch, profile } = view;
   const creatorSwaps = (swaps.data?.swaps ?? []).filter((s) => s.isCreator);
   const closeMobileTrade = () => {
     setMobileTrade(false);
@@ -123,6 +126,10 @@ export function TokenView({ address, initialData }: { address: string; initialDa
                     <Link href={`/wallet/${market.creator}`} className="inline-flex">
                       <Badge tone="primary" className="hover:bg-primary/15 transition-fast">creator <Named address={market.creator} /></Badge>
                     </Link>
+                    <DevBuyChip launch={launch} market={market} />
+                    {/* No badge for fixed profiles: their signed off-chain profile still applies. */}
+                    {profile?.onchain === 'editable' && <Badge tone="warning" title="The creator can still replace the image, description and links onchain.">Editable profile</Badge>}
+                    {profile?.onchain === 'locked' && <Badge title="The creator gave up editing for good.">Profile locked</Badge>}
                   </div>
                 </div>
               </div>
@@ -132,7 +139,9 @@ export function TokenView({ address, initialData }: { address: string; initialDa
                 {safeExternalUrl(market.website) && <IconLink href={safeExternalUrl(market.website)!} label={new URL(safeExternalUrl(market.website)!).hostname} icon={<Globe size={14} strokeWidth={1.75} />} />}
                 {safeExternalUrl(market.twitter) && <IconLink href={safeExternalUrl(market.twitter)!} label={twitterHandle(market.twitter!)} icon={<XMark />} />}
                 {safeExternalUrl(market.telegram) && <IconLink href={safeExternalUrl(market.telegram)!} label={telegramHandle(market.telegram!)} icon={<Send size={13} strokeWidth={1.75} />} />}
-                <EditProfile key={market.profileUpdatedAt ?? 'launch'} market={market} />
+                {/* One editing path per token: signed off-chain for fixed profiles, onchain for editable ones. */}
+                {(!profile || profile.onchain === 'immutable') && <EditProfile key={market.profileUpdatedAt ?? 'launch'} market={market} />}
+                {profile?.onchain === 'editable' && launch?.factory && <OnchainProfile key={profile.contractUri} market={market} factory={launch.factory} contentAddressed={profile.contentAddressed} />}
               </div>
             </div>
             <div className="px-4 md:px-5 pb-4 flex items-baseline gap-3 flex-wrap">
@@ -165,7 +174,7 @@ export function TokenView({ address, initialData }: { address: string; initialDa
           </Module>
 
           <Module>
-            <TokenRecords market={market} links={details?.links} trades={details?.lifetime.trades} fees={<FeesPanel details={details} market={market} />} />
+            <TokenRecords market={market} launch={launch} profile={profile} links={details?.links} trades={details?.lifetime.trades} fees={<FeesPanel details={details} market={market} />} />
           </Module>
         </div>
 
@@ -212,6 +221,23 @@ export function TokenView({ address, initialData }: { address: string; initialDa
   );
 }
 
+/** "Dev buy P%": neutral below 5%, amber from 5%, red from 15%. Absent when the creator bought nothing at launch. */
+function DevBuyChip({ launch, market }: { launch: LaunchInfo | undefined; market: MarketView }) {
+  const buy = launch?.creatorBuy;
+  if (!buy) return null;
+  const pct = (Number(BigInt(buy.tokensOutRaw)) / 1e27) * 100;
+  const tier = devBuyTier(buy.supplyBps);
+  const stockAmount = Number(buy.stockInRaw) / 10 ** market.stock.decimals;
+  return (
+    <Badge
+      tone={tier === 'none' ? 'neutral' : tier === 'notice' ? 'warning' : 'danger'}
+      title={`The creator bought ${pct.toFixed(2)}% of supply in the launch transaction for ${formatNumber(stockAmount, 6)} ${market.stock.symbol}. Nobody could trade before them.`}
+    >
+      Dev buy {pct.toFixed(2)}%
+    </Badge>
+  );
+}
+
 function IconLink({ href, label, icon }: { href: string; label: string; icon: React.ReactNode }) {
   return (
     <a href={href} target="_blank" rel="noreferrer noopener" title={label} aria-label={label} className="inline-flex items-center justify-center h-8 w-8 rounded-[6px] border border-line text-ink-secondary hover:text-ink hover:border-line-strong transition-fast">
@@ -254,11 +280,12 @@ function FeesPanel({ details, market }: { details: NonNullable<Extract<TokenResp
           <div className="font-mono text-[11px] text-ink-secondary">{formatNumber(fees.platformStock, 6)} {market.stock.symbol}</div>
         </div>
         <div className="p-3">
-          {/* The hook books claims per (stock, creator), not per token, so this figure covers every
-              token this creator has paired to this stock — and claim() withdraws them together.
-              Labelled for what it is rather than presented as this token's earnings. */}
-          <div className="font-mono text-[10px] uppercase tracking-[0.12em] text-ink-muted" title={`Fees the creator can withdraw in ${market.stock.symbol}, across every token they have paired to it`}>
-            Creator claimable · all {market.stock.symbol}
+          {/* Read from this token's own hook, which books claims per (stock, creator), not per token:
+              it covers every token this creator paired to this stock through the same contracts, and
+              one claim there withdraws them together. Tokens on another deployment's hook are counted
+              there, and on the wallet page. Labelled for exactly that. */}
+          <div className="font-mono text-[10px] uppercase tracking-[0.12em] text-ink-muted" title={`Fees the creator can withdraw in ${market.stock.symbol} from this token's hook. It includes their other ${market.stock.symbol} tokens on the same hook; the wallet page adds up every hook.`}>
+            Creator claimable · {market.stock.symbol} on this hook
           </div>
           <div className="display num text-[20px] leading-tight">{fees.claimableUsd === null ? '—' : formatUsd(fees.claimableUsd)}</div>
           <div className="font-mono text-[11px] text-ink-secondary">{fees.claimableStock === null ? '—' : `${formatNumber(fees.claimableStock, 6)} ${market.stock.symbol}`}</div>

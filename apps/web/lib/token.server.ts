@@ -6,10 +6,11 @@ import { BASE_CONTRACTS, stockPairHookAbi } from '@stockpair/core';
 import { readMarket, tokenFeeSummary, tokenLifetime, type Db } from '@stockpair/core/db';
 
 import { cached, TTL } from './cache.server';
-import { getPublicClient, serverDeployment } from './chain.server';
+import { getPublicClient, serverDeployments } from './chain.server';
+import { hookOf } from './deployments';
 import { poolReserves } from './liquidity';
-import { toMarketView, type MarketView } from './market-view';
-import type { TokenDetails, TokenFees, TokenLifetime, TokenPool } from './types';
+import { toLaunchInfo, toMarketView, toProfileInfo, type MarketView } from './market-view';
+import type { LaunchInfo, ProfileInfo, TokenDetails, TokenFees, TokenLifetime, TokenPool } from './types';
 
 const stateViewAbi = parseAbi(['function getSlot0(bytes32 poolId) view returns (uint160 sqrtPriceX96, int24 tick, uint24 protocolFee, uint24 lpFee)']);
 
@@ -27,33 +28,40 @@ export function externalLinks(token: string, poolId: string): TokenDetails['link
   };
 }
 
-export async function readMarketCached(db: Db, token: string): Promise<MarketView | null> {
+/** An indexed token: the market row as the UI shows it, its launch, and where its profile stands. */
+export type IndexedToken = { market: MarketView; launch: LaunchInfo; profile: ProfileInfo };
+
+export async function readTokenCached(db: Db, token: string): Promise<IndexedToken | null> {
+  // Keyed `market:` so every invalidation of the market row also drops this.
   return cached(`market:${token}`, TTL.market, async () => {
     const row = await readMarket(db, token);
-    return row ? toMarketView(row) : null;
+    return row ? { market: toMarketView(row), launch: toLaunchInfo(row), profile: toProfileInfo(row) } : null;
   });
 }
 
-/** Pool price and the current hook fee, straight from the chain (memoised for a few seconds). */
-async function readPoolState(poolId: Hex): Promise<{ sqrtPriceX96: bigint; feeBps: number } | null> {
-  const deployment = serverDeployment();
-  if (!deployment) return null;
+export async function readMarketCached(db: Db, token: string): Promise<MarketView | null> {
+  return (await readTokenCached(db, token))?.market ?? null;
+}
+
+/** Pool price and the current fee from the token's own hook, straight from the chain (memoised for a few seconds). */
+async function readPoolState(poolId: Hex, hook: Address | null): Promise<{ sqrtPriceX96: bigint; feeBps: number } | null> {
+  if (!hook) return null;
   return cached(`pool:${poolId}`, TTL.chain, async () => {
     const client = getPublicClient();
     const [slot0, feeBps] = await Promise.all([
       client.readContract({ address: BASE_CONTRACTS.stateView, abi: stateViewAbi, functionName: 'getSlot0', args: [poolId] }),
-      client.readContract({ address: deployment.hook, abi: stockPairHookAbi, functionName: 'currentFeeBps', args: [poolId] }),
+      client.readContract({ address: hook, abi: stockPairHookAbi, functionName: 'currentFeeBps', args: [poolId] }),
     ]);
     return { sqrtPriceX96: slot0[0], feeBps: Number(feeBps) };
   }).catch(() => null);
 }
 
-async function readCreatorClaimable(stock: Address, creator: Address): Promise<bigint | null> {
-  const deployment = serverDeployment();
-  if (!deployment) return null;
-  return cached(`claimable:${stock}:${creator}`, TTL.chain, async () => {
+/** Claims are booked per hook, so this is what the creator can withdraw from this token's hook. */
+async function readCreatorClaimable(stock: Address, creator: Address, hook: Address | null): Promise<bigint | null> {
+  if (!hook) return null;
+  return cached(`claimable:${hook}:${stock}:${creator}`, TTL.chain, async () => {
     const client = getPublicClient();
-    return client.readContract({ address: deployment.hook, abi: stockPairHookAbi, functionName: 'claimable', args: [stock, creator] });
+    return client.readContract({ address: hook, abi: stockPairHookAbi, functionName: 'claimable', args: [stock, creator] });
   }).catch(() => null);
 }
 
@@ -61,11 +69,14 @@ async function readCreatorClaimable(stock: Address, creator: Address): Promise<b
 export async function readTokenDetails(db: Db, market: MarketView): Promise<Omit<TokenDetails, 'market'>> {
   const stockUnit = 10 ** market.stock.decimals;
   const usd = (stockAmount: number) => (market.stockUsd === null ? null : stockAmount * market.stockUsd);
+  // No configured deployment means no chain reads at all, as before; a stored hook alone is not enough.
+  const deployments = serverDeployments();
+  const hook = deployments.length > 0 ? hookOf(deployments, market) : null;
   const [feeRow, lifeRow, poolState, claimableRaw] = await Promise.all([
     cached(`fees:${market.token}`, TTL.list, () => tokenFeeSummary(db, market.token)),
     cached(`lifetime:${market.token}`, TTL.list, () => tokenLifetime(db, market.token)),
-    readPoolState(market.poolId as Hex),
-    readCreatorClaimable(market.stock.address as Address, market.creator as Address),
+    readPoolState(market.poolId as Hex, hook),
+    readCreatorClaimable(market.stock.address as Address, market.creator as Address, hook),
   ]);
 
   const totalStock = Number(feeRow.total_raw) / stockUnit;

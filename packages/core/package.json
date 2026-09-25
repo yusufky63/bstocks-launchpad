@@ -11,8 +11,7 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "db:migrate": "tsx src/db/cli.ts migrate",
-    "db:reset": "tsx src/db/cli.ts reset"
+    "db:migrate": "tsx src/db/cli.ts migrate"
   },
   "dependencies": {
     "postgres": "^3.4.9",

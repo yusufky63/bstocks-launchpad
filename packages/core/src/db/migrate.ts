@@ -6,7 +6,7 @@ import type { Db } from './client';
 import { BASE_STOCKS } from '../stocks';
 
 /** Bump whenever schema.sql changes, so running processes re-apply it once and then stop. */
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 async function schemaSql(): Promise<string> {
   const here = dirname(fileURLToPath(import.meta.url));
@@ -55,9 +55,19 @@ async function appliedVersion(db: Db): Promise<number | null> {
  * a missing index costs a sort, whereas throwing here crash-loops the indexer and stops it following
  * the chain. The version is only recorded once every index is in place, so a skipped one is retried
  * on the next start instead of being silently lost.
+ *
+ * A database a newer release has already migrated is left exactly as it is: no DDL and no stock
+ * seeding. That is what makes rolling this code back safe -- schema changes are additive, so this
+ * code's queries still run against the newer schema, while re-applying its older schema file or
+ * stock list could only take something away from the release that owns the database now.
  */
 export async function migrate(db: Db, log: Log = () => undefined): Promise<void> {
-  if ((await appliedVersion(db)) !== SCHEMA_VERSION) {
+  const applied = await appliedVersion(db);
+  if (applied !== null && applied > SCHEMA_VERSION) {
+    log('schema is newer than this code; leaving it as it is', { applied, known: SCHEMA_VERSION });
+    return;
+  }
+  if (applied !== SCHEMA_VERSION) {
     const { core, indexes } = splitIndexes(await schemaSql());
     await db.exec(core);
     let complete = true;
@@ -95,11 +105,4 @@ export async function migrate(db: Db, log: Log = () => undefined): Promise<void>
       ],
     );
   }
-}
-
-/** Drops everything in the public schema (and the legacy private schema) and re-applies. */
-export async function reset(db: Db): Promise<void> {
-  await db.exec('DROP SCHEMA IF EXISTS base_signal_private CASCADE');
-  await db.exec('DROP SCHEMA public CASCADE; CREATE SCHEMA public;');
-  await migrate(db);
 }

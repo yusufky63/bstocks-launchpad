@@ -75,11 +75,13 @@ describe('a launch carrying control bytes', () => {
         imageUri: 'ipfs://img' + NUL,
         website: 'https://a.example' + NUL,
         twitter: 'https://x.com/handle' + NUL,
-      }),
-    ).resolves.toBeUndefined();
+        telegram: 'https://t.me/handle' + NUL,
+      }, 'ipfs://x'),
+    ).resolves.toBe(true);
     const row = await readMarket(db, token);
     expect(row!.description).toBe('hello');
     expect(row!.image_uri).toBe('ipfs://img');
     expect(row!.website).toBe('https://a.example');
+    expect(row!.telegram).toBe('https://t.me/handle');
   });
 });

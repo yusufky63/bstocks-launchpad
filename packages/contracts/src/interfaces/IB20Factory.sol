@@ -31,6 +31,7 @@ interface IB20Factory {
         returns (address);
 
     function isB20(address token) external view returns (bool);
+    function isB20Initialized(address token) external view returns (bool);
 }
 
 /// @notice The B20 token calls used during bootstrap and by the launcher.
@@ -46,4 +47,8 @@ interface IB20Token {
     function updateSupplyCap(uint256 newSupplyCap) external;
     function contractURI() external view returns (string memory);
     function updateContractURI(string calldata newURI) external;
+    function hasRole(bytes32 role, address account) external view returns (bool); // 0x91d14854
+    /// @dev Only ever encoded as a bootstrap init call; never called on a live token.
+    function grantRole(bytes32 role, address account) external; // 0x2f2ff15d
+    function renounceRole(bytes32 role, address callerConfirmation) external; // 0x36568abe
 }

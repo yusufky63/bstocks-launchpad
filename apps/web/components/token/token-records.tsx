@@ -10,7 +10,7 @@ import { AddressLabel, Named, TimeAgo, TxLink } from '@/components/ui/display';
 import { Empty, KeyValue, Skeleton, cx } from '@/components/ui/primitives';
 import { formatDateTime, formatNumber, formatPct, formatRatio, formatUsd, shortAddress } from '@/lib/format';
 import { apiGet, useHolders, useSwaps } from '@/lib/queries';
-import type { MarketView, SwapView, SwapsResponse, TokenDetails } from '@/lib/types';
+import type { LaunchInfo, MarketView, ProfileInfo, SwapView, SwapsResponse, TokenDetails } from '@/lib/types';
 import { ExternalLink } from 'lucide-react';
 
 type Tab = 'trades' | 'holders' | 'fees' | 'details';
@@ -57,7 +57,7 @@ function tabFrom(value: string | null): Tab {
   return TABS.includes(value as Tab) ? (value as Tab) : 'trades';
 }
 
-export function TokenRecords({ market, links, fees, trades }: { market: MarketView; links?: TokenDetails['links']; fees?: ReactNode; trades?: number }) {
+export function TokenRecords({ market, launch, profile, links, fees, trades }: { market: MarketView; launch?: LaunchInfo; profile?: ProfileInfo; links?: TokenDetails['links']; fees?: ReactNode; trades?: number }) {
   // `?tab=holders` opens the holders list directly, so a link can point at it. Without this the
   // Telegram channel's Holders button and its Trade button landed on the same view.
   const search = useSearchParams();
@@ -286,20 +286,61 @@ export function TokenRecords({ market, links, fees, trades }: { market: MarketVi
           <KeyValue k="Website" v={<ExternalValue url={market.website} />} mono={false} />
           <KeyValue k="X" v={<ExternalValue url={market.twitter} />} mono={false} />
           <KeyValue k="Telegram" v={<ExternalValue url={market.telegram} />} mono={false} />
-          <KeyValue k="Profile" v={market.profileUpdatedAt ? `Updated by the creator with a signed message · ${formatDateTime(market.profileUpdatedAt)}` : 'As written in the launch metadata'} mono={false} />
+          <KeyValue k="Profile" v={profileText(market, profile)} mono={false} />
+          {profile && profile.onchain !== 'immutable' && (
+            <KeyValue k="Profile permission" v="The launch factory holds this token's metadata role and uses it only to replace the contract URI when the original creator asks. Name, symbol and supply can never change." mono={false} />
+          )}
           <KeyValue k="Token" v={<AddressLabel address={market.token} explorer kind="token" chars={8} />} />
           <KeyValue k="Creator" v={<Link href={`/wallet/${market.creator}`} className="text-primary font-mono">{shortAddress(market.creator, 8)}</Link>} />
           <KeyValue k="Paired stock" v={<span className="inline-flex items-center gap-2">{market.stock.symbol} <AddressLabel address={market.stock.address} explorer kind="token" showCopy={false} /></span>} />
           <KeyValue k="Pool id" v={<AddressLabel address={market.poolId} chars={10} />} />
           <KeyValue k="Launch tx" v={<TxLink hash={market.txHash}>{shortAddress(market.txHash, 8)}</TxLink>} />
+          <KeyValue k="Creator buy at launch" v={<CreatorBuyValue launch={launch} market={market} />} mono={false} />
           <KeyValue k="Launched" v={formatDateTime(market.launchedAt)} />
           <KeyValue k="Supply" v="1,000,000,000 · 18 decimals · no admin, no mint, no pause" mono={false} />
           <KeyValue k="Liquidity" v="Whole supply in a single-sided Uniswap v4 position held by the factory. No function can withdraw it." mono={false} />
-          <KeyValue k="Fees" v={`1% of every swap in ${market.stock.symbol}: 70% to the creator, 30% to the platform. 99% anti-snipe fee decaying to 1% over the first 20 s.`} mono={false} />
+          <KeyValue k="Fees" v={`1% of every swap in ${market.stock.symbol}: 70% to the creator, 30% to the platform.`} mono={false} />
           <KeyValue k="Opening" v={`Priced from the Chainlink ${market.stock.ticker} feed so the token opened at a $5,000 valuation. Now ${formatRatio(market.priceInStock, market.stock.symbol)} per token.`} mono={false} />
         </div>
       )}
     </>
+  );
+}
+
+/** What the Profile row says, by where the profile stands onchain. */
+export function profileText(market: Pick<MarketView, 'profileUpdatedAt'>, profile: ProfileInfo | undefined): string {
+  let text: string;
+  if (!profile || profile.onchain === 'immutable') {
+    text = market.profileUpdatedAt ? `Updated by the creator with a signed message · ${formatDateTime(market.profileUpdatedAt)}` : 'As written in the launch metadata';
+  } else if (profile.onchain === 'locked') {
+    const on = `Locked by the creator on ${profile.lockedAt ? formatDateTime(profile.lockedAt) : 'an unknown date'}.`;
+    // "Never change" holds only when everything shown is content-addressed; otherwise only the link is fixed.
+    text = profile.contentAddressed ? `${on} It can never change again.` : `${on} The token can never point at a different profile again.`;
+  } else {
+    text =
+      profile.updates === 0
+        ? 'Editable onchain by the creator · not changed yet'
+        : `Editable onchain by the creator · changed ${profile.updates} ${profile.updates === 1 ? 'time' : 'times'}, last ${profile.lastUpdatedAt ? formatDateTime(profile.lastUpdatedAt) : '—'}`;
+  }
+  // Content behind an https URI, or an ipfs:// path that can leave its CID, can change with no onchain
+  // event at all, whatever the status says.
+  if (profile && !profile.contentAddressed) text += ' Part of this profile is served from an address whose content can change without an onchain record.';
+  return text;
+}
+
+/** "N SYM (P%) for X STOCK · tx", or "None". */
+function CreatorBuyValue({ launch, market }: { launch: LaunchInfo | undefined; market: MarketView }) {
+  const buy = launch?.creatorBuy;
+  if (!buy) return <>None</>;
+  const tokens = Number(BigInt(buy.tokensOutRaw)) / 1e18;
+  const stockAmount = Number(buy.stockInRaw) / 10 ** market.stock.decimals;
+  return (
+    <span>
+      {formatNumber(tokens, 0)} {market.symbol} ({formatPct((tokens / 1e9) * 100, { sign: false })}) for {formatNumber(stockAmount, 6)} {market.stock.symbol} ·{' '}
+      <TxLink hash={buy.txHash} className="text-[13px]">
+        tx
+      </TxLink>
+    </span>
   );
 }
 

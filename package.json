@@ -14,9 +14,9 @@
     "dev:indexer": "pnpm --filter @stockpair/indexer dev",
     "test": "pnpm -r --if-present test",
     "test:contracts": "cd packages/contracts && forge test -vv",
+    "abi": "cd packages/contracts && forge build && node ../../scripts/gen-abi.mjs",
     "typecheck": "pnpm -r --if-present typecheck",
-    "db:migrate": "pnpm --filter @stockpair/core db:migrate",
-    "db:reset": "pnpm --filter @stockpair/core db:reset"
+    "db:migrate": "pnpm --filter @stockpair/core db:migrate"
   },
   "devDependencies": {
     "@types/node": "^24.5.2",

@@ -4,8 +4,8 @@ import {
   e30ToDecimalString,
   e30ToNumber,
   fdvUsd,
-  feeBpsAt,
   formatAmount,
+  openingPriceUsd,
   parseAmount,
   percentChange,
   stockPerTokenE30,
@@ -61,12 +61,27 @@ describe('stockPerTokenE30', () => {
   });
 });
 
-describe('feeBpsAt', () => {
-  it('decays from 99% to 1% over twenty seconds', () => {
-    expect(feeBpsAt(100, 100)).toBe(9_900);
-    expect(feeBpsAt(100, 110)).toBe(5_000);
-    expect(feeBpsAt(100, 120)).toBe(100);
-    expect(feeBpsAt(100, 10_000)).toBe(100);
+describe('openingPriceUsd', () => {
+  // 5,000 USD FDV at NVDA 229.9573 USD: W = 45,991,460 whole tokens per whole stock.
+  const stockUsd8 = 22_995_730_000n;
+  const tokensPerStock = (stockUsd8 * 10n ** 9n) / 5_000_00000000n;
+
+  it('prices the opening at the launch FDV for both currency orders', () => {
+    const tokenIsCurrency1 = sqrtPriceFor(tokensPerStock * 10n ** 18n, 10n ** 8n);
+    const tokenIsCurrency0 = sqrtPriceFor(10n ** 8n, tokensPerStock * 10n ** 18n);
+    expect(openingPriceUsd(tokenIsCurrency1, false, 8, stockUsd8)).toBeCloseTo(0.000005, 11);
+    expect(openingPriceUsd(tokenIsCurrency0, true, 8, stockUsd8)).toBeCloseTo(0.000005, 11);
+    expect(openingPriceUsd(tokenIsCurrency1, false, 8, stockUsd8) * 1e9).toBeCloseTo(5_000, 3);
+  });
+
+  it('is the stored price times the Chainlink value at launch', () => {
+    const sqrt = sqrtPriceFor(tokensPerStock * 10n ** 18n, 10n ** 8n);
+    expect(openingPriceUsd(sqrt, false, 8, stockUsd8)).toBe(tokenUsd(stockPerTokenE30(sqrt, false, 8), stockUsd8));
+    // An 18-decimal stock shifts the raw price, not the USD result.
+    const sqrt18 = sqrtPriceFor(tokensPerStock * 10n ** 18n, 10n ** 18n);
+    expect(openingPriceUsd(sqrt18, false, 18, stockUsd8)).toBeCloseTo(0.000005, 11);
+    // A doubled stock price doubles the token's USD price at the same pool price.
+    expect(openingPriceUsd(sqrt, false, 8, stockUsd8 * 2n)).toBeCloseTo(0.00001, 11);
   });
 });
 

@@ -13,6 +13,10 @@ Her madde kodun kendisiyle veya zincirden okumayla ayrıca kontrol edildi. Durum
 
 ### A1 — Anti-snipe exact-output ile aşılıyor · **Doğrulandı** · yeni hook gerektirir
 
+**Durum, 25 Eylül:** Pencere tamamen kaldırıldı (`bbe2e4f`). Hook ilk bloktan itibaren tek ücret
+alıyor, %1; aşılacak bir koruma kalmadı. Eski hook'ta açılmış havuzların hepsi pencereyi çoktan
+geçti. Aşağıdaki bulgu kayıt için duruyor.
+
 `StockPairHook.sol:196-221`. Ücret *specified* taraf üzerinden alınıyor. Exact-input alışta specified
 girdidir, yani trader'ın ödediği tutar. Exact-output alışta specified çıktıdır (token), ücret
 `afterSwap`'te *unspecified* olan havuz girdisinden alınır.
@@ -154,7 +158,8 @@ yok. Bu hem zincir takibini bekletir hem de logolarımızı sunan gateway'de rat
 
 - **Creator anti-snipe ücretinin %70'ini geri alabiliyor** (`StockPairHook.sol:_charge`). Doğrulandı:
   bölüşüm `feeBps`'ten bağımsız. Bu bir açık değil, teşvik tercihi. Değiştirmek istersen creator
-  payını yalnızca taban ücrete uygula — yine yeni hook demek.
+  payını yalnızca taban ücrete uygula — yine yeni hook demek. **Artık geçersiz:** pencere `bbe2e4f`
+  ile kaldırıldı.
 - **Treasury değişimi mevcut havuzların gelecekteki platform ücretlerini de yönlendirir.** Hook her
   swap'te factory'den okuyor. Operasyonel tercih; belgelenmeli ve çoklu imzaya bağlanmalı.
 - **Stock transfer pause swap ve claim'i durdurabilir.** `claimMany` içinde tek bir stock revert

@@ -1,6 +1,6 @@
 'use client';
 
-import { ArrowRight, Coins, Lock, Percent, Search, Timer, Wallet } from 'lucide-react';
+import { ArrowRight, Coins, Eye, Lock, Percent, Search, Wallet } from 'lucide-react';
 import Link from 'next/link';
 import { useMemo } from 'react';
 
@@ -141,7 +141,7 @@ const HOW_IT_WORKS = [
   { icon: Search, title: 'Pick a stock', body: '13 Coinbase tokenized stocks on Base, each with a Chainlink price feed, are the only quote assets.' },
   { icon: Coins, title: 'Launch in one transaction', body: 'A zero-admin B20 token with exactly one billion supply is created and its pool opens at a $5,000 valuation.' },
   { icon: Lock, title: 'Liquidity is locked', body: 'The whole supply sits in a single-sided Uniswap v4 position held by the factory. No function can withdraw it.' },
-  { icon: Timer, title: 'Snipers pay 99%', body: 'The swap fee starts at 99% and falls to 1% over the first twenty seconds, so bots cannot front-run the launch.' },
+  { icon: Eye, title: 'Dev buys in the open', body: 'On the newest launch factory a creator can buy in the launch transaction itself, before anyone else can trade. The token page shows any dev buy as a share of supply.' },
   { icon: Percent, title: 'Fees in the stock', body: 'Every buy and sell pays 1% in the stock. The hook keeps it as claims: 70% for the creator, 30% for the platform.' },
   { icon: Wallet, title: 'Claim any time', body: 'Creators claim their NVDAc, TSLAc or other stock from their wallet page. No lockups, no auth, no middleman.' },
 ];

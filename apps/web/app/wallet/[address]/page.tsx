@@ -148,7 +148,7 @@ export default async function WalletPage({ params }: Props) {
         <div className="flex flex-col gap-5">
           <Module ticks>
             <ModuleHeader title="Claimable fees" action={<span className="font-mono text-[11px] text-ink-muted">{formatUsd(summary.claimableUsd)}</span>} />
-            <ClaimFees wallet={wallet} claimable={summary.claimable} />
+            <ClaimFees wallet={wallet} claimable={summary.claimable} unreadHooks={summary.claimableUnreadHooks} />
           </Module>
           <Module>
             <ModuleHeader title="Creator record" />

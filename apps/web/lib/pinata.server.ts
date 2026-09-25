@@ -1,5 +1,7 @@
 import 'server-only';
 
+import { isBareIpfsUri } from './market-view';
+
 const PINATA_UPLOAD_URL = 'https://uploads.pinata.cloud/v3/files';
 const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
 const ALLOWED_IMAGE_TYPES = new Set(['image/png', 'image/webp', 'image/jpeg', 'image/gif']);
@@ -10,7 +12,11 @@ export type MetadataInput = {
   description: string;
   website: string | null;
   twitter?: string | null;
+  /** Canonical t.me URL; the indexer reads it from the same `telegram` key. */
+  telegram?: string | null;
   image?: { bytes: ArrayBuffer; type: string; fileName: string } | null;
+  /** An image already pinned, kept when no new file is uploaded (an onchain profile edit). */
+  existingImageUri?: string | null;
 };
 
 export class PinError extends Error {
@@ -60,7 +66,9 @@ export async function pinMetadata(
   const jwt = env.PINATA_JWT?.trim();
   if (!jwt) throw new PinError('NOT_CONFIGURED', 'PINATA_JWT is not configured.');
 
-  let imageUri: string | null = null;
+  // Only a bare CID is kept: anything else could change behind the same URI, and editable profiles
+  // promise that every change is an onchain event.
+  let imageUri: string | null = isBareIpfsUri(input.existingImageUri) ? input.existingImageUri! : null;
   if (input.image) {
     if (!ALLOWED_IMAGE_TYPES.has(input.image.type)) throw new PinError('IMAGE_INVALID', 'Use PNG, WebP, JPEG or GIF.');
     if (input.image.bytes.byteLength > MAX_IMAGE_BYTES) throw new PinError('IMAGE_INVALID', 'Keep the image at or below 2 MB.');
@@ -75,6 +83,7 @@ export async function pinMetadata(
     ...(imageUri ? { image: imageUri } : {}),
     ...(input.website ? { external_link: input.website } : {}),
     ...(input.twitter ? { twitter: input.twitter } : {}),
+    ...(input.telegram ? { telegram: input.telegram } : {}),
   };
   const cid = await pinFile(
     jwt,

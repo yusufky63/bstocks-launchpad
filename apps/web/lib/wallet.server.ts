@@ -19,7 +19,10 @@ export type WalletSummary = {
   holdingsUsd: number | null;
   createdFdvUsd: number | null;
   /** Null when the chain read failed: unknown, not "nothing to claim". */
-  claimable: { stock: string; symbol: string; ticker: string; amount: number; amountRaw: string; usd: number | null }[] | null;
+  claimable: { stock: string; symbol: string; ticker: string; amount: number; amountRaw: string; usd: number | null; hook: string }[] | null;
+  /** Hooks whose balances could not be read just now; `claimable` lists only the ones that answered. */
+  claimableUnreadHooks: string[];
+  /** Null while any hook is unread: a total of the ones that answered would understate it. */
   claimableUsd: number | null;
   recentSwaps: { txHash: string; token: string; name: string; symbol: string; side: 'buy' | 'sell'; amountToken: number; amountStock: number; amountUsd: number | null; stockSymbol: string; blockTime: string; isCreator: boolean }[];
   creator: CreatorOverview;
@@ -72,11 +75,12 @@ export async function readWalletSummary(db: Db, wallet: string): Promise<WalletS
         valueUsd: priceUsd === null ? null : balance * priceUsd,
       };
     });
-    const claimable = claimableRaw === null ? null : claimableRaw.map((c) => {
+    const claimableUnreadHooks: string[] = claimableRaw?.unreadHooks ?? [];
+    const claimable = claimableRaw === null ? null : claimableRaw.balances.map((c) => {
       const decimals = stockDecimals.get(c.stock.toLowerCase()) ?? findStock(c.stock)?.decimals ?? 8;
       const amount = Number(c.amountRaw) / 10 ** decimals;
       const usd = stockUsd.get(c.stock.toLowerCase()) ?? null;
-      return { stock: c.stock, symbol: c.symbol, ticker: findStock(c.stock)?.ticker ?? c.symbol.replace(/c$/u, ''), amount, amountRaw: c.amountRaw, usd: usd === null ? null : amount * usd };
+      return { stock: c.stock, symbol: c.symbol, ticker: findStock(c.stock)?.ticker ?? c.symbol.replace(/c$/u, ''), amount, amountRaw: c.amountRaw, usd: usd === null ? null : amount * usd, hook: c.hook };
     });
     const sum = (items: { valueUsd?: number | null; usd?: number | null }[], key: 'valueUsd' | 'usd') => {
       const values = items.map((i) => i[key] ?? null).filter((v): v is number => v !== null);
@@ -89,7 +93,8 @@ export async function readWalletSummary(db: Db, wallet: string): Promise<WalletS
       holdingsUsd: sum(holdings, 'valueUsd'),
       createdFdvUsd: created.length ? created.reduce((s, m) => s + (m.fdvUsd ?? 0), 0) : null,
       claimable,
-      claimableUsd: claimable === null ? null : sum(claimable, 'usd'),
+      claimableUnreadHooks,
+      claimableUsd: claimable === null || claimableUnreadHooks.length > 0 ? null : sum(claimable, 'usd'),
       recentSwaps: swaps.map((row) => {
         const market = markets.get(row.token);
         const decimals = market?.stock.decimals ?? stockDecimals.get(market?.stock.address ?? '') ?? 8;

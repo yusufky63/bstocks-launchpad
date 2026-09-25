@@ -5,7 +5,8 @@ import { parseAbi, type Address, type Hex } from 'viem';
 import { BASE_CONTRACTS, stockPairHookAbi, stockPerTokenE30, e30ToNumber } from '@stockpair/core';
 import { readMarket, type Db } from '@stockpair/core/db';
 
-import { getPublicClient, serverDeployment } from './chain.server';
+import { getPublicClient, serverDeployments } from './chain.server';
+import { hookOf } from './deployments';
 
 const quoterAbi = parseAbi([
   'struct PoolKey { address currency0; address currency1; uint24 fee; int24 tickSpacing; address hooks; }',
@@ -70,12 +71,15 @@ export class QuoteError extends Error {
 }
 
 export async function quoteExactIn(db: Db, request: QuoteRequest): Promise<QuoteResult> {
-  const deployment = serverDeployment();
-  if (!deployment) throw new QuoteError('NOT_CONFIGURED', 'Contracts are not configured.');
+  const deployments = serverDeployments();
+  if (deployments.length === 0) throw new QuoteError('NOT_CONFIGURED', 'Contracts are not configured.');
   const market = await readMarket(db, request.token);
   if (!market) throw new QuoteError('TOKEN_NOT_FOUND', 'Unknown token.');
+  // The pool key carries the hook that launched this token, which is not the newest for old tokens.
+  const hook = hookOf(deployments, market);
+  if (!hook) throw new QuoteError('NOT_CONFIGURED', 'Contracts are not configured.');
 
-  const key = poolKeyFor(market.token, market.stock, deployment.hook);
+  const key = poolKeyFor(market.token, market.stock, hook);
   const tokenIsCurrency0 = market.token_is_currency0;
   // buy = stock in, token out. zeroForOne means currency0 in.
   const zeroForOne = request.side === 'buy' ? !tokenIsCurrency0 : tokenIsCurrency0;
@@ -85,7 +89,7 @@ export async function quoteExactIn(db: Db, request: QuoteRequest): Promise<Quote
   const [slot0, liquidity, feeBps] = await Promise.all([
     client.readContract({ address: BASE_CONTRACTS.stateView, abi: stateViewAbi, functionName: 'getSlot0', args: [poolId] }),
     client.readContract({ address: BASE_CONTRACTS.stateView, abi: stateViewAbi, functionName: 'getLiquidity', args: [poolId] }),
-    client.readContract({ address: deployment.hook, abi: stockPairHookAbi, functionName: 'currentFeeBps', args: [poolId] }),
+    client.readContract({ address: hook, abi: stockPairHookAbi, functionName: 'currentFeeBps', args: [poolId] }),
   ]);
 
   let amountOut: bigint;
@@ -100,7 +104,8 @@ export async function quoteExactIn(db: Db, request: QuoteRequest): Promise<Quote
     [amountOut, gasEstimate] = simulation.result;
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : String(cause);
-    if (/liquidity|SPL|PriceLimit/iu.test(message)) {
+    // PartialFill (0xd964f528) is the hook refusing a swap the pool cannot fill in full.
+    if (/liquidity|SPL|PriceLimit|PartialFill|d964f528/iu.test(message)) {
       throw new QuoteError('NO_LIQUIDITY', 'Not enough liquidity for this size.');
     }
     throw new QuoteError('QUOTE_FAILED', 'The pool could not quote this swap.');

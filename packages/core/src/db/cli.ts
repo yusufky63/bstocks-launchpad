@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import process from 'node:process';
 
 import { createPostgresDb } from './client';
-import { migrate, reset } from './migrate';
+import { migrate } from './migrate';
 
 function loadEnv(): void {
   for (const candidate of ['.env', '../../apps/indexer/.env', '../../apps/web/.env.local']) {
@@ -19,24 +19,18 @@ function loadEnv(): void {
 }
 
 async function main(): Promise<void> {
-  loadEnv();
+  // Migrate is the only command. There is deliberately no reset: DATABASE_URL is the production
+  // database on every machine that has one, and a command that drops it is one habit away from
+  // being run. Tests use the embedded database. The command is checked before any connection.
   const command = process.argv[2];
+  if (command !== 'migrate') throw new Error('Usage: cli.ts migrate');
+  loadEnv();
   const url = process.env.DATABASE_URL?.trim();
   if (!url) throw new Error('DATABASE_URL is required.');
   const db = await createPostgresDb(url);
   try {
-    if (command === 'migrate') {
-      await migrate(db);
-      process.stdout.write('Schema applied and stocks seeded.\n');
-    } else if (command === 'reset') {
-      if (process.env.CONFIRM_RESET !== 'yes') {
-        throw new Error('Refusing to drop the database without CONFIRM_RESET=yes.');
-      }
-      await reset(db);
-      process.stdout.write('Database reset and schema applied.\n');
-    } else {
-      throw new Error('Usage: cli.ts <migrate|reset>');
-    }
+    await migrate(db);
+    process.stdout.write('Schema applied and stocks seeded.\n');
   } finally {
     await db.close();
   }

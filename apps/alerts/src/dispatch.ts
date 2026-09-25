@@ -17,7 +17,17 @@ import {
 } from '@stockpair/core/db';
 
 import type { AlertsConfig } from './config';
-import { judgeTrade, nextMilestone, isNewHigh, toMarket, type Market, type TradePayload } from './policy';
+import {
+  isLaunchBuy,
+  isNewHigh,
+  judgeTrade,
+  nextMilestone,
+  toLaunch,
+  toLinks,
+  toMarket,
+  type Market,
+  type TradePayload,
+} from './policy';
 import {
   athPost,
   digestPost,
@@ -154,9 +164,7 @@ async function snapshot(
     launchedAt: new Date(row.launched_at).toISOString(),
     creator: row.creator,
     creatorName: await name(row.creator),
-    website: row.profile_website ?? row.website,
-    twitter: row.profile_twitter ?? row.twitter,
-    telegram: row.profile_telegram,
+    ...toLinks(row),
     poolId: market.poolId,
   };
 }
@@ -182,12 +190,16 @@ async function consider(alert: AlertRow, deps: DispatchDeps, planning: Planning)
 
   if (alert.kind === 'launch') {
     const snap = await snapshot(row, market, deps, name);
-    return { alertId: alert.id, symbol: market.symbol, post: launchPost(config.appUrl, facts(row, market), snap) };
+    const launch = toLaunch(row, alert.payload);
+    return { alertId: alert.id, symbol: market.symbol, post: launchPost(config.appUrl, facts(row, market), snap, launch) };
   }
 
+  // Anything else, profile edits and locks included, is dealt with silently. A creator with an
+  // editable profile could otherwise post to the channel as often as they can pay for gas.
   if (alert.kind !== 'trade') return null;
   const payload = alert.payload as TradePayload | null;
   if (!payload || (payload.side !== 'buy' && payload.side !== 'sell')) return null;
+  if (isLaunchBuy(payload)) return null;
 
   const verdict = judgeTrade(payload, market, config);
 

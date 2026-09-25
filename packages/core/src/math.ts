@@ -55,10 +55,18 @@ export function fdvUsd(priceStockPerTokenE30: bigint, stockUsd8: bigint): number
   return tokenUsd(priceStockPerTokenE30, stockUsd8) * Number(SUPPLY_WHOLE);
 }
 
-export function feeBpsAt(launchedAtSeconds: number, nowSeconds: number): number {
-  const elapsed = Math.max(0, nowSeconds - launchedAtSeconds);
-  if (elapsed >= 20) return 100;
-  return Math.floor(9_900 - ((9_900 - 100) * elapsed) / 20);
+/**
+ * USD per token at the pool's opening price, priced with the Chainlink value the factory read at
+ * launch. A launch that buys in the same transaction moves the price at once, so the last trade
+ * price overstates where the token opened; this is the figure to announce as "opens at".
+ */
+export function openingPriceUsd(
+  openingSqrtPriceX96: bigint,
+  tokenIsCurrency0: boolean,
+  stockDecimals: number,
+  stockUsd8: bigint,
+): number {
+  return tokenUsd(stockPerTokenE30(openingSqrtPriceX96, tokenIsCurrency0, stockDecimals), stockUsd8);
 }
 
 /** Formats a raw bigint amount with the given decimals into a compact decimal string. */

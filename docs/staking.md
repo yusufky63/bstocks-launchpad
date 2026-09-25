@@ -116,6 +116,7 @@ everywhere else.
   when the *reward* transfer would revert, or a pause traps deposits.
 - **Never trust the creator profile for anything but display.** `name`, `symbol`, `description`,
   `website` are chosen by whoever paid the launch fee. They are not identity.
-- **The 20 second anti-snipe window applies to the pool, not to staking**, but a staking UI that
-  links to a fresh token still has to show the countdown, for the same reason the token card does.
+- **A fresh token can open with a creator buy.** The creator may have bought part of the supply
+  in the launch transaction itself. A staking UI that links to a token should show that share, for
+  the same reason the token page does.
 - **Do not read `pool_id` as an address.** It is a hash. Interactions need the full `PoolKey`.

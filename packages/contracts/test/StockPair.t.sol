@@ -1,93 +1,41 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
 
-import { Test } from "forge-std/Test.sol";
-import { PoolManager } from "@uniswap/v4-core/src/PoolManager.sol";
 import { IPoolManager } from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import { IHooks } from "@uniswap/v4-core/src/interfaces/IHooks.sol";
-import { Hooks } from "@uniswap/v4-core/src/libraries/Hooks.sol";
 import { StateLibrary } from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
 import { FullMath } from "@uniswap/v4-core/src/libraries/FullMath.sol";
 import { TickMath } from "@uniswap/v4-core/src/libraries/TickMath.sol";
 import { PoolKey } from "@uniswap/v4-core/src/types/PoolKey.sol";
 import { PoolId, PoolIdLibrary } from "@uniswap/v4-core/src/types/PoolId.sol";
 import { Currency } from "@uniswap/v4-core/src/types/Currency.sol";
-import { BalanceDelta } from "@uniswap/v4-core/src/types/BalanceDelta.sol";
 import { SwapParams } from "@uniswap/v4-core/src/types/PoolOperation.sol";
 import { PoolSwapTest } from "@uniswap/v4-core/src/test/PoolSwapTest.sol";
 import { V4Quoter } from "@uniswap/v4-periphery/src/lens/V4Quoter.sol";
 import { IV4Quoter } from "@uniswap/v4-periphery/src/interfaces/IV4Quoter.sol";
-import { HookMiner } from "@uniswap/v4-periphery/test/shared/HookMiner.sol";
 
 import { StockPairFactory } from "../src/StockPairFactory.sol";
 import { StockPairHook } from "../src/StockPairHook.sol";
 import { StockPairRouter } from "../src/StockPairRouter.sol";
 import { MockB20Factory, MockB20Token } from "./mocks/MockB20.sol";
-import { MockFeed, MockStock } from "./mocks/MockStock.sol";
+import { MockStock } from "./mocks/MockStock.sol";
+import { Fixture } from "./Fixture.sol";
 
-contract StockPairTest is Test {
+contract StockPairTest is Fixture {
     using PoolIdLibrary for PoolKey;
     using StateLibrary for IPoolManager;
 
-    address constant B20_FACTORY = 0xB20f000000000000000000000000000000000000;
-    address constant STOCK_LOW = 0x0000000000000000000000000000000000001000;
-    address constant STOCK_HIGH = 0xffffFfFFFFfffFfFfffFffFffFfFfFfFfFFFf000;
-    int256 constant NVDA_USD8 = 229_95730000; // 229.9573 USD
-
-    PoolManager manager;
     V4Quoter quoter;
-    PoolSwapTest swapper;
     MockB20Factory b20;
     MockStock stockLow;
     MockStock stockHigh;
-    MockFeed feed;
-    StockPairFactory factory;
-    StockPairHook hook;
-    StockPairRouter router;
 
-    address owner = makeAddr("owner");
-    address treasury = makeAddr("treasury");
-    address creator = makeAddr("creator");
-    address trader = makeAddr("trader");
-    uint256 FEE;
-
-    function setUp() public {
-        vm.warp(1_757_000_000);
-        manager = new PoolManager(address(this));
+    function setUp() public override {
+        super.setUp();
         quoter = new V4Quoter(manager);
-        swapper = new PoolSwapTest(manager);
-
-        MockB20Factory impl = new MockB20Factory();
-        vm.etch(B20_FACTORY, address(impl).code);
         b20 = MockB20Factory(B20_FACTORY);
-
-        deployCodeTo("MockStock.sol:MockStock", abi.encode("NVIDIA Corporation", "NVDAc"), STOCK_LOW);
-        deployCodeTo("MockStock.sol:MockStock", abi.encode("Tesla Inc.", "TSLAc"), STOCK_HIGH);
         stockLow = MockStock(STOCK_LOW);
         stockHigh = MockStock(STOCK_HIGH);
-        feed = new MockFeed("Coinbase NVDA", NVDA_USD8);
-
-        factory = new StockPairFactory(manager, owner, treasury);
-        FEE = factory.creationFee();
-        uint160 flags = uint160(
-            Hooks.BEFORE_INITIALIZE_FLAG | Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_SWAP_FLAG
-                | Hooks.BEFORE_SWAP_RETURNS_DELTA_FLAG | Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG
-        );
-        (address predicted, bytes32 salt) = HookMiner.find(
-            address(this), flags, type(StockPairHook).creationCode, abi.encode(manager, address(factory))
-        );
-        hook = new StockPairHook{ salt: salt }(manager, address(factory));
-        assertEq(address(hook), predicted, "mined hook address");
-        router = new StockPairRouter(manager);
-
-        vm.startPrank(owner);
-        factory.setHook(hook);
-        factory.addStock(STOCK_LOW, address(feed), "NVDAc", 8);
-        factory.addStock(STOCK_HIGH, address(feed), "TSLAc", 8);
-        vm.stopPrank();
-
-        vm.deal(creator, 1 ether);
-        vm.deal(trader, 1 ether);
     }
 
     // ---------------------------------------------------------------------------------------

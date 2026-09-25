@@ -41,6 +41,8 @@ export type LaunchRow = {
   image_uri: string | null;
   website: string | null;
   twitter: string | null;
+  /** From the profile JSON, like description and image; NULL until fetched or when absent. */
+  telegram: string | null;
   opening_sqrt_price_x96: string;
   tick_lower: number;
   tick_upper: number;
@@ -52,6 +54,15 @@ export type LaunchRow = {
   log_index: number;
   launched_at: Date;
   metadata_fetched_at: Date | null;
+  /** The creator chose an editable profile at launch. False for every launch before that option. */
+  metadata_editable: boolean;
+  /** When the creator gave up editing for good; NULL while editable, and for fixed profiles. */
+  metadata_locked_at: Date | null;
+  /** The contract URI the creator last set onchain. NULL means `contract_uri`, the launch value. */
+  current_contract_uri: string | null;
+  /** The factory and hook that made this launch. NULL only until the indexer backfills old rows. */
+  factory: string | null;
+  hook: string | null;
 };
 
 export type SwapRow = {
@@ -115,6 +126,16 @@ export type MarketRow = LaunchRow & {
   volume_all_stock_raw: string;
   trades_all: number;
   holder_count: number;
+  /**
+   * The creator's buy inside the launch transaction: stock paid including the hook fee, the fee,
+   * and tokens received. All NULL when there was none, which includes every older token.
+   */
+  creator_buy_stock_raw: string | null;
+  creator_buy_fee_raw: string | null;
+  creator_buy_token_raw: string | null;
+  /** Onchain contract URI changes, and when the last one landed. */
+  profile_updates: number;
+  profile_updated_onchain_at: Date | null;
 };
 
 export type CursorRow = { next_block: string; last_block_hash: string | null; updated_at: Date };
@@ -246,15 +267,21 @@ export type LaunchInsert = {
   txHash: string;
   logIndex: number;
   launchedAt: Date;
+  /** Set from MetadataEditable in the same transaction. Absent means false, the only value before it. */
+  metadataEditable?: boolean;
+  /** The emitting factory and its hook. The indexer always sets both; NULL rows are backfilled. */
+  factory?: string | null;
+  hook?: string | null;
 };
 
 export async function insertLaunches(db: Db, launches: readonly LaunchInsert[]) {
-  for (const chunk of chunked(launches, 18)) {
+  for (const chunk of chunked(launches, 21)) {
     await db.query(
       `INSERT INTO launches (token, stock, creator, pool_id, token_is_currency0, name, symbol,
          contract_uri, opening_sqrt_price_x96, tick_lower, tick_upper, liquidity,
-         stock_usd8_at_launch, block_number, block_hash, tx_hash, log_index, launched_at)
-       VALUES ${placeholders(chunk.length, 18)}
+         stock_usd8_at_launch, block_number, block_hash, tx_hash, log_index, launched_at,
+         metadata_editable, factory, hook)
+       VALUES ${placeholders(chunk.length, 21)}
        ON CONFLICT (token) DO NOTHING`,
       chunk.flatMap((l) => [
         l.token.toLowerCase(),
@@ -275,6 +302,9 @@ export async function insertLaunches(db: Db, launches: readonly LaunchInsert[]) 
         l.txHash,
         l.logIndex,
         l.launchedAt,
+        l.metadataEditable ?? false,
+        l.factory?.toLowerCase() ?? null,
+        l.hook?.toLowerCase() ?? null,
       ]),
     );
   }
@@ -284,23 +314,219 @@ export async function insertLaunch(db: Db, l: LaunchInsert) {
   await insertLaunches(db, [l]);
 }
 
+/**
+ * Stores the profile read from `fetchedUri`, only if that is still the token's contract URI.
+ *
+ * An editable token can change its URI while a fetch of the old one is in flight; without the
+ * guard, the slow old document would land last and overwrite the new one. Returns false when the
+ * guard refused the write (the newer URI's own fetch fills it in).
+ */
 export async function updateLaunchMetadata(
   db: Db,
   token: string,
-  metadata: { description: string | null; imageUri: string | null; website: string | null; twitter?: string | null },
-) {
-  await db.query(
-    `UPDATE launches SET description = $2, image_uri = $3, website = $4, twitter = $5, metadata_fetched_at = now()
-     WHERE token = $1`,
-    // Metadata comes from a URI the launcher chose, so it is no more trusted than the launch text.
+  metadata: {
+    description: string | null;
+    imageUri: string | null;
+    website: string | null;
+    twitter?: string | null;
+    telegram?: string | null;
+  },
+  fetchedUri: string,
+): Promise<boolean> {
+  // Metadata comes from a URI the launcher chose, so it is no more trusted than the launch text.
+  const clean = (value: string | null | undefined) => (value == null ? null : sanitizeText(value));
+  const rows = await db.query<{ token: string }>(
+    `UPDATE launches SET description = $2, image_uri = $3, website = $4, twitter = $5, telegram = $6,
+       metadata_fetched_at = now()
+     WHERE token = $1 AND COALESCE(current_contract_uri, contract_uri) = $7
+     RETURNING token`,
     [
       token.toLowerCase(),
-      metadata.description === null ? null : sanitizeText(metadata.description),
-      metadata.imageUri === null ? null : sanitizeText(metadata.imageUri),
-      metadata.website === null ? null : sanitizeText(metadata.website),
-      metadata.twitter == null ? null : sanitizeText(metadata.twitter),
+      clean(metadata.description),
+      clean(metadata.imageUri),
+      clean(metadata.website),
+      clean(metadata.twitter),
+      clean(metadata.telegram),
+      fetchedUri,
     ],
   );
+  return rows.length > 0;
+}
+
+export type MetadataUpdateInsert = {
+  txHash: string;
+  logIndex: number;
+  token: string;
+  /** 'uri' for ContractURIChanged, 'lock' for MetadataLocked. */
+  kind: 'uri' | 'lock';
+  /** The new URI for 'uri'; null for 'lock'. */
+  contractUri: string | null;
+  blockNumber: bigint;
+  blockTime: Date;
+};
+
+/**
+ * Records onchain profile changes and applies them to their launches. Only rows that are new move
+ * anything, so re-indexing a range does not reset a fetch that already succeeded.
+ *
+ * A new URI becomes `current_contract_uri` and is queued for a fetch; the old description and image
+ * stay until that fetch succeeds. A lock stamps `metadata_locked_at`. Both read the latest row per
+ * token, so the order within a batch does not matter. Returns how many rows were new.
+ *
+ * The failed-fetch backoff starts again from zero only when the token's previous URI change is more
+ * than an hour older (in block time). An update costs the creator only gas, so without that a
+ * creator could keep a URI that never resolves at the front of the fetch queue by re-sending it
+ * every block; a real edit an hour or more after the last one still gets a fresh start.
+ */
+export async function insertMetadataUpdates(db: Db, updates: readonly MetadataUpdateInsert[]): Promise<number> {
+  const uriTokens = new Set<string>();
+  const lockTokens = new Set<string>();
+  let inserted = 0;
+  for (const chunk of chunked(updates, 7)) {
+    const fresh = await db.query<{ token: string; kind: 'uri' | 'lock' }>(
+      `INSERT INTO metadata_updates (tx_hash, log_index, token, kind, contract_uri, block_number, block_time)
+       VALUES ${placeholders(chunk.length, 7)}
+       ON CONFLICT (tx_hash, log_index) DO NOTHING
+       RETURNING token, kind`,
+      chunk.flatMap((u) => [
+        u.txHash,
+        u.logIndex,
+        u.token.toLowerCase(),
+        u.kind,
+        u.kind === 'uri' && u.contractUri !== null ? sanitizeText(u.contractUri) : null,
+        u.blockNumber.toString(),
+        u.blockTime,
+      ]),
+    );
+    inserted += fresh.length;
+    for (const row of fresh) (row.kind === 'uri' ? uriTokens : lockTokens).add(row.token);
+  }
+  if (uriTokens.size > 0) {
+    await db.query(
+      `WITH latest AS (
+         SELECT DISTINCT ON (m.token) m.token, m.contract_uri, m.block_number, m.log_index, m.block_time
+         FROM metadata_updates m
+         WHERE m.token = ANY($1::text[]) AND m.kind = 'uri'
+         ORDER BY m.token, m.block_number DESC, m.log_index DESC
+       ), paced AS (
+         SELECT latest.*, EXISTS (
+           SELECT 1 FROM metadata_updates p
+           WHERE p.token = latest.token AND p.kind = 'uri'
+             AND (p.block_number, p.log_index) < (latest.block_number, latest.log_index)
+             AND p.block_time > latest.block_time - interval '1 hour'
+         ) AS recent
+         FROM latest
+       )
+       UPDATE launches l SET
+         current_contract_uri = paced.contract_uri,
+         metadata_fetched_at = NULL,
+         metadata_attempts = CASE WHEN paced.recent THEN l.metadata_attempts ELSE 0 END,
+         metadata_last_attempt_at = CASE WHEN paced.recent THEN l.metadata_last_attempt_at ELSE NULL END
+       FROM paced
+       WHERE l.token = paced.token`,
+      [[...uriTokens]],
+    );
+  }
+  if (lockTokens.size > 0) {
+    await db.query(
+      `UPDATE launches l SET
+         metadata_locked_at = (SELECT m.block_time FROM metadata_updates m
+           WHERE m.token = l.token AND m.kind = 'lock' ORDER BY m.block_number DESC, m.log_index DESC LIMIT 1)
+       WHERE l.token = ANY($1::text[])`,
+      [[...lockTokens]],
+    );
+  }
+  return inserted;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Deployments
+//
+// Every factory and hook ever deployed stays live, so each launch row records the pair that made it.
+// ---------------------------------------------------------------------------------------------
+
+export type UnstampedLaunchRow = {
+  token: string;
+  creator: string;
+  tx_hash: string;
+  log_index: number;
+  block_number: string;
+};
+
+/**
+ * Launches with no factory or hook recorded: rows indexed before launches carried their deployment,
+ * or by an older release after a rollback. The caller finds each one's deployment on the chain.
+ */
+export async function listUnstampedLaunches(db: Db): Promise<UnstampedLaunchRow[]> {
+  return db.query<UnstampedLaunchRow>(
+    `SELECT token, creator, tx_hash, log_index, block_number FROM launches
+     WHERE factory IS NULL OR hook IS NULL ORDER BY block_number, log_index`,
+  );
+}
+
+/**
+ * Records the deployment that made these launches. Only rows still missing it are touched: a
+ * launch's deployment never changes, so one already recorded is never overwritten. Returns how many
+ * rows it filled.
+ */
+export async function stampLaunchDeployment(
+  db: Db,
+  deployment: { factory: string; hook: string },
+  tokens: readonly string[],
+): Promise<number> {
+  if (tokens.length === 0) return 0;
+  const rows = await db.query<{ token: string }>(
+    `UPDATE launches SET factory = $1, hook = $2
+     WHERE token = ANY($3::text[]) AND (factory IS NULL OR hook IS NULL) RETURNING token`,
+    [deployment.factory.toLowerCase(), deployment.hook.toLowerCase(), tokens.map((t) => t.toLowerCase())],
+  );
+  return rows.length;
+}
+
+export type IndexedDeploymentRow = { factory: string; caught_up_through: string };
+
+/** Deployments whose catch-up pass has committed, by lowercase factory. */
+export async function readIndexedDeployments(db: Db): Promise<IndexedDeploymentRow[]> {
+  return db.query<IndexedDeploymentRow>('SELECT factory, caught_up_through FROM indexed_deployments ORDER BY factory');
+}
+
+/** Records that a deployment's logs are indexed through `block`, inclusive. Never moves backwards. */
+export async function markDeploymentIndexed(db: Db, factory: string, block: bigint): Promise<void> {
+  await db.query(
+    `INSERT INTO indexed_deployments (factory, caught_up_through) VALUES ($1, $2)
+     ON CONFLICT (factory) DO UPDATE SET
+       caught_up_through = GREATEST(indexed_deployments.caught_up_through, EXCLUDED.caught_up_through)`,
+    [factory.toLowerCase(), block.toString()],
+  );
+}
+
+/**
+ * Moves the deployments a main pass over [from, to] read on to `to`, in that pass's transaction.
+ * A row only moves when it already reaches `from - 1`: one that does not has a stretch below the
+ * cursor nobody read for it, and advancing it would hide that stretch from the next start's
+ * catch-up. Deployments with no row yet are left for their catch-up pass to record.
+ *
+ * Returns the factories whose row stayed behind `to`, so the caller can run that catch-up now
+ * rather than on the next start.
+ */
+export async function advanceIndexedDeployments(
+  db: Db,
+  factories: readonly string[],
+  from: bigint,
+  to: bigint,
+): Promise<string[]> {
+  if (factories.length === 0) return [];
+  const lower = factories.map((f) => f.toLowerCase());
+  await db.query(
+    `UPDATE indexed_deployments SET caught_up_through = $3
+     WHERE factory = ANY($1::text[]) AND caught_up_through >= $2 AND caught_up_through < $3`,
+    [lower, (from - 1n).toString(), to.toString()],
+  );
+  const behind = await db.query<{ factory: string }>(
+    'SELECT factory FROM indexed_deployments WHERE factory = ANY($1::text[]) AND caught_up_through < $2 ORDER BY factory',
+    [lower, to.toString()],
+  );
+  return behind.map((row) => row.factory);
 }
 
 export type SwapInsert = {
@@ -661,6 +887,23 @@ export async function rollbackFrom(db: Db, fromBlock: bigint) {
   await db.query('DELETE FROM swaps WHERE block_number >= $1', [from]);
   await db.query('DELETE FROM fee_events WHERE block_number >= $1', [from]);
   await db.query('DELETE FROM fee_claims WHERE block_number >= $1', [from]);
+  // Profile changes in the reorged range go, and their tokens fall back to the latest change that
+  // survives, or to the launch URI. The subqueries exclude the deleted rows by block: every part of
+  // one statement reads the same snapshot, so they would otherwise still see them. The fetch state
+  // is reset so the profile shown is read again from the URI now in force.
+  await db.query(
+    `WITH gone AS (DELETE FROM metadata_updates WHERE block_number >= $1 RETURNING token)
+     UPDATE launches l SET
+       current_contract_uri = (SELECT m.contract_uri FROM metadata_updates m
+         WHERE m.token = l.token AND m.kind = 'uri' AND m.block_number < $1
+         ORDER BY m.block_number DESC, m.log_index DESC LIMIT 1),
+       metadata_locked_at = (SELECT m.block_time FROM metadata_updates m
+         WHERE m.token = l.token AND m.kind = 'lock' AND m.block_number < $1
+         ORDER BY m.block_number DESC, m.log_index DESC LIMIT 1),
+       metadata_fetched_at = NULL, metadata_attempts = 0, metadata_last_attempt_at = NULL
+     WHERE l.token IN (SELECT DISTINCT token FROM gone)`,
+    [from],
+  );
   // Launches in the reorged range take their derived rows with them -- except the creator's signed
   // profile, which is not derived from anything and cannot be signed again. Park it first.
   await db.query(
@@ -875,7 +1118,9 @@ const MARKET_SELECT = `
     coalesce(vol.trades, 0)::int AS trades_24h,
     coalesce(vol.volume_all_stock_raw, 0)::numeric(40,0) AS volume_all_stock_raw,
     coalesce(vol.trades_all, 0)::int AS trades_all,
-    coalesce(h.holder_count, 0)::int AS holder_count
+    coalesce(h.holder_count, 0)::int AS holder_count,
+    cb.creator_buy_stock_raw, cb.creator_buy_fee_raw, cb.creator_buy_token_raw,
+    coalesce(mu.profile_updates, 0)::int AS profile_updates, mu.profile_updated_onchain_at
   FROM launches l
   JOIN stocks s ON s.address = l.stock
   LEFT JOIN stock_quotes q ON q.stock = l.stock
@@ -906,7 +1151,22 @@ const MARKET_SELECT = `
     WHERE balances.token = l.token AND balance_raw > 0
       AND holder <> '0x000000000000000000000000000000000000dead'
       AND holder <> lower('${POOL_MANAGER}')
-  ) h ON true`;
+  ) h ON true
+  LEFT JOIN LATERAL (
+    -- The creator's buy inside the launch transaction. Nothing can trade a pool before it is
+    -- registered, so a creator buy in that transaction is the launch buy. The primary key of swaps,
+    -- (tx_hash, log_index), serves the lookup. No buy, as for every older token: all NULL.
+    SELECT sum(s.amount_stock_raw + s.fee_stock_raw) AS creator_buy_stock_raw,
+           sum(s.fee_stock_raw) AS creator_buy_fee_raw,
+           sum(s.amount_token_raw) AS creator_buy_token_raw
+    FROM swaps s
+    WHERE s.tx_hash = l.tx_hash AND s.token = l.token AND s.side = 'buy' AND s.trader = l.creator
+  ) cb ON true
+  LEFT JOIN LATERAL (
+    SELECT count(*) FILTER (WHERE m.kind = 'uri') AS profile_updates,
+           max(m.block_time) FILTER (WHERE m.kind = 'uri') AS profile_updated_onchain_at
+    FROM metadata_updates m WHERE m.token = l.token
+  ) mu ON true`;
 
 export async function listMarkets(
   db: Db,
@@ -1340,7 +1600,12 @@ export type ActivityRow = {
   is_creator: boolean;
 };
 
-/** Launches and swaps in one time-ordered feed, optionally for a single token or trader. */
+/**
+ * Launches and swaps in one time-ordered feed, optionally for a single token or trader.
+ *
+ * The image follows the token's one editing path: a creator-signed profile image wins for a fixed
+ * profile, while an editable profile shows only what its onchain URI says.
+ */
 export async function listActivity(
   db: Db,
   options: { limit?: number; token?: string; actor?: string } = {},
@@ -1360,16 +1625,20 @@ export async function listActivity(
   return db.query<ActivityRow>(
     `SELECT * FROM (
        SELECT 'launch' AS kind, l.launched_at AS at, l.block_number, l.tx_hash, l.log_index, l.token, l.name, l.symbol,
-              l.image_uri, l.stock, st.symbol AS stock_symbol, st.decimals AS stock_decimals,
+              CASE WHEN l.metadata_editable THEN l.image_uri ELSE COALESCE(p.image_uri, l.image_uri) END AS image_uri,
+              l.stock, st.symbol AS stock_symbol, st.decimals AS stock_decimals,
               l.creator AS actor, NULL::text AS side, NULL::numeric AS amount_token_raw, NULL::numeric AS amount_stock_raw,
               true AS is_creator
        FROM launches l JOIN stocks st ON st.address = l.stock
+       LEFT JOIN token_profiles p ON p.token = l.token
        UNION ALL
        SELECT 'swap', s.block_time, s.block_number, s.tx_hash, s.log_index, s.token, l.name, l.symbol,
-              l.image_uri, l.stock, st.symbol, st.decimals,
+              CASE WHEN l.metadata_editable THEN l.image_uri ELSE COALESCE(p.image_uri, l.image_uri) END,
+              l.stock, st.symbol, st.decimals,
               s.trader, s.side, s.amount_token_raw, s.amount_stock_raw,
               (s.trader IS NOT NULL AND s.trader = l.creator)
        FROM swaps s JOIN launches l ON l.token = s.token JOIN stocks st ON st.address = l.stock
+       LEFT JOIN token_profiles p ON p.token = l.token
      ) feed ${where}
      ORDER BY at DESC, block_number DESC, log_index DESC LIMIT $${params.length}`,
     params,

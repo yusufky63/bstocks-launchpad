@@ -1,8 +1,9 @@
-import { readMarket, readTokenProfile } from '@stockpair/core/db';
+import { readMarket } from '@stockpair/core/db';
 
 import { error, parseAddressParam } from '@/lib/api.server';
 import { getDb } from '@/lib/db.server';
 import { ipfsToHttp } from '@/lib/env';
+import { effectiveImageUri, imageVersion, isBareIpfsUri } from '@/lib/market-view';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,19 +23,26 @@ const MAX_BYTES = 5 * 1024 * 1024;
  * refuses is a poor thing to hand over. This is a stable https URL we control.
  *
  * The bytes still live on IPFS; this only fetches and caches them.
+ *
+ * The site links `?v=<first 12 hex of sha256(image URI)>`. An image can change (a signed profile,
+ * or an editable token's onchain update), so only a request whose `v` matches the current image is
+ * cached for good, and only when that image is a bare ipfs:// CID; anything else gets a short cache.
  */
-export async function GET(_request: Request, { params }: Context): Promise<Response> {
+export async function GET(request: Request, { params }: Context): Promise<Response> {
   const { address } = await params;
   const token = parseAddressParam(address);
   if (!token) return error(400, 'INVALID_ADDRESS', 'Token address is malformed.');
 
-  const db = await getDb();
-  const [market, profile] = await Promise.all([readMarket(db, token), readTokenProfile(db, token)]);
+  const market = await readMarket(await getDb(), token);
   if (!market) return error(404, 'TOKEN_NOT_FOUND', 'No token was launched at this address.');
 
-  // The creator's signed profile image wins over the one fixed at launch, matching the site.
-  const source = ipfsToHttp(profile?.image_uri ?? market.image_uri);
-  if (!source) return error(404, 'NO_IMAGE', 'This token has no image.');
+  // The same image the site shows: the signed profile's for fixed tokens, the onchain one for editable.
+  const uri = effectiveImageUri(market);
+  const source = ipfsToHttp(uri);
+  if (!uri || !source) return error(404, 'NO_IMAGE', 'This token has no image.');
+  // `v` hashes the URI, not the bytes: it pins the bytes only when the URI is itself a content hash.
+  // An https image can be replaced at the same address, which a year-long immutable cache would hide.
+  const current = isBareIpfsUri(uri) && new URL(request.url).searchParams.get('v') === imageVersion(uri);
 
   let upstream: Response;
   try {
@@ -52,9 +60,9 @@ export async function GET(_request: Request, { params }: Context): Promise<Respo
   return new Response(upstream.body, {
     headers: {
       'content-type': type,
-      // Content at a CID never changes, and a signed profile change moves the CID, so this is safe
-      // to cache hard. The URL stays the same; what it points at is versioned by the CID behind it.
-      'cache-control': 'public, max-age=3600, s-maxage=86400, stale-while-revalidate=604800',
+      // A matching `v` on a bare CID names these exact bytes, so it never needs revalidating. Anything
+      // else may be a different image tomorrow; a minute is as long as it can be trusted.
+      'cache-control': current ? 'public, max-age=31536000, immutable' : 'public, max-age=60, s-maxage=60',
     },
   });
 }

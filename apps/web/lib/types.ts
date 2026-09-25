@@ -57,8 +57,36 @@ export type HolderConcentration = { holders: number; poolPercent: number; burned
 export type TokenPool = { liquidity: string; tokenReserve: number; stockReserve: number; stockReserveUsd: number | null; tokenShareOfSupply: number; sqrtPriceX96: string; feeBps: number } | null;
 export type TokenDetails = { market: MarketView; fees: TokenFees; lifetime: TokenLifetime; pool: TokenPool; links: { basescan: string; dexscreener: string; geckoterminal: string; uniswap: string } };
 
+/** The creator's buy inside the launch transaction, read from the indexed swap. Raw units as strings. */
+export type CreatorBuyView = { stockInRaw: string; feeRaw: string; tokensOutRaw: string; supplyBps: number; txHash: string };
+
+/** Which deployment launched the token, and the creator's buy at launch (null when there was none). */
+export type LaunchInfo = { factory: string | null; hook: string | null; creatorBuy: CreatorBuyView | null };
+
+/**
+ * `immutable` covers every token launched with a fixed profile, including all older ones; their
+ * signed off-chain profile still applies. `editable` and `locked` are profiles the creator changes
+ * onchain only.
+ */
+export type OnchainProfileStatus = 'immutable' | 'editable' | 'locked';
+
+export type ProfileInfo = {
+  onchain: OnchainProfileStatus;
+  /** The contract URI the token points at now. */
+  contractUri: string;
+  /**
+   * True only when the contract URI and the image shown (if any) are both `ipfs://` and a bare CID,
+   * so nothing on the profile can change without an onchain event.
+   */
+  contentAddressed: boolean;
+  /** Onchain contract URI changes since launch. */
+  updates: number;
+  lastUpdatedAt: string | null;
+  lockedAt: string | null;
+};
+
 export type TokenResponse =
-  | { status: 'indexed'; market: MarketView; details?: Omit<TokenDetails, 'market'> }
+  | { status: 'indexed'; market: MarketView; details?: Omit<TokenDetails, 'market'>; launch: LaunchInfo; profile: ProfileInfo }
   | { status: 'pending'; token: string; txHash: string | null }
   | {
       status: 'indexing';

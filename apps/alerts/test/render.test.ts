@@ -7,11 +7,13 @@ import {
   esc,
   fits,
   formatAmount,
+  formatShare,
   formatUsd,
   formatUsdCompact,
   launchPost,
   tradePost,
   trim,
+  type LaunchDetail,
   type Snapshot,
   type TokenFacts,
 } from '../src/render';
@@ -53,6 +55,13 @@ function snap(over: Partial<Snapshot> = {}): Snapshot {
   };
 }
 
+/** A plain launch: no buy and a fixed profile, opening at half what the snapshot's last trade says. */
+function launch(over: Partial<LaunchDetail> = {}): LaunchDetail {
+  return { openingPriceUsd: 0.0000052, openingFdvUsd: 5_200, creatorBuy: null, metadataEditable: false, ...over };
+}
+
+const CREATOR_BUY = { supplyBps: 434, amountStock: 2.11, valueUsd: 474.0959 };
+
 const TRADE = {
   side: 'buy' as const,
   valueUsd: 474.91,
@@ -79,6 +88,8 @@ describe('escaping', () => {
       APP,
       { ...FACTS, name: '<img src=x onerror=alert(1)>', symbol: 'X_Y.Z' },
       snap({ website: 'javascript:alert(1)', twitter: 'tg://resolve?domain=evil' }),
+      // Every optional line present, so each of them is inside the tag count below.
+      launch({ creatorBuy: CREATOR_BUY, metadataEditable: true }),
     );
     expect(post.text).not.toContain('<img');
     expect(post.text).toContain('&lt;img');
@@ -214,6 +225,13 @@ describe('a trade post', () => {
     expect(text).toContain('>X</a>');
   });
 
+  it('links Telegram on every kind of card when there is one', () => {
+    const withTg = snap({ telegram: 'https://t.me/stockpair' });
+    for (const text of [tradePost(APP, FACTS, withTg, TRADE).text, launchPost(APP, FACTS, withTg, launch()).text]) {
+      expect(text).toContain('<a href="https://t.me/stockpair">TG</a>');
+    }
+  });
+
   // True of every token this launchpad makes, so it says nothing about this one.
   it('does not repeat what is true of every token', () => {
     const text = tradePost(APP, FACTS, snap(), TRADE).text;
@@ -278,7 +296,12 @@ describe('a launch post', () => {
   // A token seconds old has no day behind it, no holders outside the pool and no high to have
   // reached. Printing the trade card here gave it a row of dashes and zeros.
   it('says only what is true at zero seconds old', () => {
-    const text = launchPost(APP, FACTS, snap({ volume24hUsd: null, change24hPercent: null, holders: 0, topHolders: [], athUsd: null })).text;
+    const text = launchPost(
+      APP,
+      FACTS,
+      snap({ volume24hUsd: null, change24hPercent: null, holders: 0, topHolders: [], athUsd: null }),
+      launch(),
+    ).text;
     expect(text).toContain('Opens at');
     expect(text).toContain('trades against');
     expect(text).toContain('1,000,000,000 supply');
@@ -288,21 +311,91 @@ describe('a launch post', () => {
     expect(text).not.toContain('Age');
   });
 
-  // The most useful thing anyone can be told in a token's first minute.
-  it('warns that the first twenty seconds cost 99%', () => {
-    expect(launchPost(APP, FACTS, snap()).text).toContain('99%');
-    expect(launchPost(APP, FACTS, snap()).text).toContain('20 seconds');
+  // A buy in the launch transaction has moved the last price before this card is sent. Printing
+  // that as "opens at" would show everyone else the price after the creator's buy.
+  it('opens at the opening price even when the last trade is higher', () => {
+    const text = launchPost(APP, FACTS, snap({ priceUsd: 0.0000107, fdvUsd: 10_700 }), launch()).text;
+    expect(text).toContain('💰 Opens at $0.00000520 · 💎 FDV $5.2K');
+    expect(text).not.toContain('$0.00001070');
+    expect(text).not.toContain('$10.7K');
+  });
+
+  it('prints a dash rather than a guess when the opening price is unknown', () => {
+    const text = launchPost(APP, FACTS, snap(), launch({ openingPriceUsd: null, openingFdvUsd: null })).text;
+    expect(text).toContain('💰 Opens at — · 💎 FDV —');
+    expect(text).not.toContain('NaN');
+  });
+
+  // There is no fee window any more, on new pools or old ones, so there is nothing to warn about.
+  it('says nothing about a launch fee schedule', () => {
+    const text = launchPost(APP, FACTS, snap(), launch({ creatorBuy: CREATOR_BUY, metadataEditable: true })).text;
+    expect(text).not.toContain('99%');
+    expect(text).not.toContain('seconds');
+    expect(text).not.toContain('Swap fee');
+  });
+
+  it('says what the creator bought in the launch transaction', () => {
+    const text = launchPost(APP, FACTS, snap(), launch({ creatorBuy: CREATOR_BUY })).text;
+    expect(text).toContain('🧑‍💻 Creator bought 4.34% of supply at launch (2.11 NVDAc ≈ $474.10)');
+    // Straight after the supply line it qualifies, and before the byline.
+    const lines = text.split('\n');
+    const bought = lines.findIndex((l) => l.includes('Creator bought'));
+    expect(lines[bought - 1]).toContain('1,000,000,000 supply');
+    expect(lines[bought + 1]).toContain('👤 by');
+  });
+
+  it('leaves out the dollar figure when there is no Chainlink value for it', () => {
+    const text = launchPost(APP, FACTS, snap(), launch({ creatorBuy: { ...CREATOR_BUY, valueUsd: null } })).text;
+    expect(text).toContain('Creator bought 4.34% of supply at launch (2.11 NVDAc)');
+    expect(text).not.toContain('≈');
+  });
+
+  it('has no creator line when the creator did not buy', () => {
+    expect(launchPost(APP, FACTS, snap(), launch()).text).not.toContain('Creator bought');
+  });
+
+  // "All of it in the pool" stops being true the moment a creator buy takes some back out.
+  it('does not claim the whole supply is still in the pool', () => {
+    const text = launchPost(APP, FACTS, snap(), launch({ creatorBuy: CREATOR_BUY })).text;
+    expect(text).toContain('all of it put in the pool');
+    expect(text).not.toContain('all of it in the pool');
+  });
+
+  it('says when the creator can still change the profile', () => {
+    expect(launchPost(APP, FACTS, snap(), launch({ metadataEditable: true })).text).toContain(
+      '✏️ Profile editable by the creator',
+    );
+    expect(launchPost(APP, FACTS, snap(), launch()).text).not.toContain('editable');
   });
 
   it('still carries the links and the address', () => {
-    const text = launchPost(APP, FACTS, snap()).text;
+    const text = launchPost(APP, FACTS, snap(), launch()).text;
     expect(text).toContain('>DexScreener</a>');
     expect(text).toContain('>Gecko</a>');
     expect(text).toContain(`<code>${FACTS.token}</code>`);
   });
 
   it('lets the token page render the preview image', () => {
-    expect(launchPost(APP, FACTS, snap()).preview).toBe(`${APP}/token/${FACTS.token}`);
+    expect(launchPost(APP, FACTS, snap(), launch()).preview).toBe(`${APP}/token/${FACTS.token}`);
+  });
+});
+
+describe('a share of supply', () => {
+  it('prints basis points as a percentage without trailing zeros', () => {
+    expect(formatShare(434)).toBe('4.34%');
+    expect(formatShare(500)).toBe('5%');
+    expect(formatShare(1_250)).toBe('12.5%');
+    expect(formatShare(10_000)).toBe('100%');
+  });
+
+  // A buy under one basis point still bought tokens; "0%" would say it bought none.
+  it('does not round a real buy down to nothing', () => {
+    expect(formatShare(0)).toBe('<0.01%');
+  });
+
+  it('prints a dash for a figure that is not one', () => {
+    expect(formatShare(Number.NaN)).toBe('—');
+    expect(formatShare(-1)).toBe('—');
   });
 });
 

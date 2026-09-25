@@ -257,3 +257,36 @@ export function Tabs<T extends string>({ tabs, value, onChange, ariaLabel }: { t
     </div>
   );
 }
+
+/* ---------- Checkbox: a required acknowledgement ---------- */
+
+export function Checkbox({ checked, onChange, children, className, disabled }: { checked: boolean; onChange: (checked: boolean) => void; children: ReactNode; className?: string; disabled?: boolean }) {
+  return (
+    <label className={cx('flex items-start gap-2.5 text-[13px] cursor-pointer select-none', disabled && 'opacity-50 cursor-not-allowed', className)}>
+      <input type="checkbox" checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} className="mt-0.5 h-4 w-4 shrink-0 accent-primary cursor-pointer disabled:cursor-not-allowed" />
+      <span className="min-w-0">{children}</span>
+    </label>
+  );
+}
+
+/* ---------- Switch: an on/off setting that starts off ---------- */
+
+export function Switch({ checked, onChange, label, disabled, id }: { checked: boolean; onChange: (checked: boolean) => void; label: string; disabled?: boolean; id?: string }) {
+  return (
+    <button
+      id={id}
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+      className={cx(
+        'relative inline-flex h-6 w-10 shrink-0 items-center rounded-full border transition-fast disabled:opacity-40 disabled:cursor-not-allowed outline-none focus-visible:ring-2 focus-visible:ring-primary/50',
+        checked ? 'bg-primary border-primary-strong' : 'bg-surface-muted border-line-strong',
+      )}
+    >
+      <span aria-hidden className={cx('inline-block h-4 w-4 rounded-full bg-canvas border border-line shadow-[0_1px_0_rgba(0,0,0,0.06)] transition-transform duration-150 motion-reduce:transition-none', checked ? 'translate-x-[19px]' : 'translate-x-[3px]')} />
+    </button>
+  );
+}
