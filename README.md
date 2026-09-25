@@ -1,4 +1,4 @@
-# StockPair
+# BStocks - Launchpad
 
 Stock-paired token launcher on Base. One transaction creates a zero-admin B20 token with a fixed
 1,000,000,000 supply and opens a Uniswap v4 pool against a Coinbase tokenized stock (NVDAc, TSLAc,
