@@ -1,0 +1,10 @@
+{
+  "block": 51779212,
+  "chainId": 8453,
+  "confirmed": false,
+  "factory": "0xbDfDa19a3c382D03654dF6978341658685c86A06",
+  "hook": "0x8dA0192aE04BDCd11c413F81d0fe6BB28a17a0cC",
+  "owner": "0x78de409a6306550882328E2a67160471368387FF",
+  "router": "0x031Cb45d7f2d218f5Aff962AD34B9F53E9BE2227",
+  "treasury": "0x78de409a6306550882328E2a67160471368387FF"
+}
