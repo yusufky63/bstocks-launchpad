@@ -94,6 +94,8 @@ async function main(): Promise<void> {
       state.nextBlock = (await readCursor(db))?.next_block ?? firstBlock.toString();
       state.lastSync = { ...serialize(result), at: new Date().toISOString() };
       state.lastError = null;
+      // Retries of failed profile fetches are due on a clock, whatever the chain is doing.
+      metadata.kickIfDue(20, started);
       if (result.status === 'progressed') {
         log('synced', serialize(result));
         if (needsMetadataFetch(result)) metadata.kick(20);

@@ -88,8 +88,10 @@ never swapped in, and the database is never reset for it.
    advanced; the loop runs its catch-up before the next pass instead of waiting for a restart.
 
 Profile documents are fetched beside the chain sync, one run at a time with a 30-second budget, so a
-URI that hangs delays profiles but never trades, alerts or the cursor. An onchain profile change
-restarts a failing fetch's backoff at most once an hour.
+URI that hangs delays profiles but never trades, alerts or the cursor. A fetch that fails is retried
+after a backoff (1, 4, 16… minutes, six attempts): the worker runs every minute on its own clock as
+well as after new launches and profile changes, since Base never idles long enough to trigger it
+otherwise. An onchain profile change restarts a failing fetch's backoff at most once an hour.
 
 Stocks' `enabled` flags mirror the newest factory, which is what the create form offers. Prices keep
 refreshing for every stock that has a launch as well, so disabling a stock on an older factory does

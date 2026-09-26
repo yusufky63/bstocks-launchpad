@@ -1451,4 +1451,25 @@ describe('metadata backfill limits', () => {
     expect(logged).toEqual(['metadata filled', 'metadata backfill failed']);
     expect(runs).toBe(2);
   });
+
+  // A profile whose first fetch failed (a document pinned seconds earlier that the gateway did not
+  // serve yet) used to stay unfilled for good: the worker only ran on new launches, profile changes
+  // or an idle poll, and Base never idles.
+  it('runs on its own clock so a failed fetch is retried once its backoff has passed', async () => {
+    const limits: number[] = [];
+    const worker = metadataWorker(async (limit) => (limits.push(limit), 0), () => undefined, { retryEveryMs: 60_000 });
+    expect(worker.kickIfDue(20, 0)).toBe(true);
+    await worker.settled();
+    expect(worker.kickIfDue(20, 30_000)).toBe(false); // too soon
+    expect(worker.kickIfDue(20, 59_999)).toBe(false);
+    expect(worker.kickIfDue(20, 60_000)).toBe(true);
+    await worker.settled();
+    // An event-driven kick counts too: it resets the clock rather than doubling up.
+    expect(worker.kick(5, 100_000)).toBe(true);
+    await worker.settled();
+    expect(worker.kickIfDue(20, 150_000)).toBe(false);
+    expect(worker.kickIfDue(20, 160_000)).toBe(true);
+    await worker.settled();
+    expect(limits).toEqual([20, 20, 5, 20]);
+  });
 });

@@ -113,6 +113,8 @@ export async function fetchMetadata(
 
 /** How many times a URI is retried before it is left alone. */
 const MAX_METADATA_ATTEMPTS = 6;
+/** How often the worker runs on its own, so a failed fetch is retried once its backoff has passed. */
+export const METADATA_RETRY_INTERVAL_MS = 60_000;
 
 export type BackfillOptions = Readonly<{
   /** Most documents one run reads. */
@@ -177,12 +179,19 @@ type Log = (message: string, fields?: Record<string, unknown>) => void;
  * URI that hangs delays profiles, never swaps, alerts or the cursor. One run at a time: asking
  * while one is in flight does nothing, and the next ask after it finishes starts another.
  */
-export function metadataWorker(run: (limit: number) => Promise<number>, log: Log) {
+export function metadataWorker(
+  run: (limit: number) => Promise<number>,
+  log: Log,
+  options: { retryEveryMs?: number } = {},
+) {
+  const retryEveryMs = options.retryEveryMs ?? METADATA_RETRY_INTERVAL_MS;
   let current: Promise<void> | null = null;
+  let lastKickAt = Number.NEGATIVE_INFINITY;
   return {
     /** Starts a run unless one is in flight; returns whether it started one. Never throws. */
-    kick(limit: number): boolean {
+    kick(limit: number, now: number = Date.now()): boolean {
       if (current) return false;
+      lastKickAt = now;
       current = run(limit)
         .then((filled) => {
           if (filled > 0) log('metadata filled', { filled });
@@ -192,6 +201,15 @@ export function metadataWorker(run: (limit: number) => Promise<number>, log: Log
           current = null;
         });
       return true;
+    },
+    /**
+     * A run on a clock, for the retries. A fetch that failed is due again after its backoff, and
+     * nothing on the chain announces that: Base never idles, so a worker kicked only by new
+     * launches and profile changes would leave a failed profile unfilled for good.
+     */
+    kickIfDue(limit: number, now: number = Date.now()): boolean {
+      if (now - lastKickAt < retryEveryMs) return false;
+      return this.kick(limit, now);
     },
     /** Resolves once the run in flight, if any, has finished. */
     async settled(): Promise<void> {
