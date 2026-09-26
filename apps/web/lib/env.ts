@@ -17,8 +17,8 @@ const deployments = readDeployments(
 
 /** Browser-safe configuration derived from NEXT_PUBLIC_* variables at build time. */
 export const publicEnv = {
-  appUrl: process.env.NEXT_PUBLIC_APP_URL ?? (process.env.NODE_ENV === 'production' ? 'https://launchpad.basestocks.finance' : 'http://localhost:3000'),
-  ipfsGateway: (process.env.NEXT_PUBLIC_IPFS_GATEWAY ?? 'https://gateway.pinata.cloud').replace(/\/$/u, ''),
+  appUrl: (process.env.NEXT_PUBLIC_APP_URL?.trim() || (process.env.NODE_ENV === 'production' ? 'https://launchpad.basestocks.finance' : 'http://localhost:3000')).replace(/\/+$/u, ''),
+  ipfsGateway: (process.env.NEXT_PUBLIC_IPFS_GATEWAY?.trim() || 'https://gateway.pinata.cloud').replace(/\/+$/u, ''),
   /** Every factory, hook and router still live, oldest first. Old tokens keep trading on theirs. */
   deployments,
   /** The deployment new launches go to. */
