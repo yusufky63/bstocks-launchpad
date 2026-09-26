@@ -23,3 +23,13 @@ it('uses default URLs when the configuration contains only whitespace', async ()
   expect(publicEnv.appUrl).toBe('https://launchpad.basestocks.finance');
   expect(publicEnv.ipfsGateway).toBe('https://gateway.pinata.cloud');
 });
+it('trims connector identifiers before they reach RPC and WalletConnect requests', async () => {
+  vi.stubEnv('NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID', ' example-project\n');
+  vi.stubEnv('NEXT_PUBLIC_ALCHEMY_API_KEY', ' example-key\r\n');
+  vi.stubEnv('NEXT_PUBLIC_TELEGRAM_CHANNEL', ' https://t.me/example\n');
+  vi.resetModules();
+  const { publicEnv } = await import('@/lib/env');
+  expect(publicEnv.walletConnectId).toBe('example-project');
+  expect(publicEnv.alchemyKey).toBe('example-key');
+  expect(publicEnv.telegramChannel).toBe('https://t.me/example');
+});

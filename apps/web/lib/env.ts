@@ -25,13 +25,13 @@ export const publicEnv = {
   newest: deployments.at(-1) ?? null,
   /** Same as `newest`, for pages that show one set of addresses. */
   deployment: deployments.at(-1) ?? null,
-  alchemyKey: process.env.NEXT_PUBLIC_ALCHEMY_API_KEY ?? '',
+  alchemyKey: process.env.NEXT_PUBLIC_ALCHEMY_API_KEY?.trim() ?? '',
   /** WalletConnect (Reown) project id; when set it enables the mobile-wallet connector. */
-  walletConnectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ?? '',
+  walletConnectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID?.trim() ?? '',
   /** Base Builder Code (ERC-8021). The same code the trading app attributes to. */
   builderCode: process.env.NEXT_PUBLIC_BASE_BUILDER_CODE || 'bc_71vd6x2w',
   /** The alerts channel. Empty until one exists, which is what hides the links to it. */
-  telegramChannel: process.env.NEXT_PUBLIC_TELEGRAM_CHANNEL ?? '',
+  telegramChannel: process.env.NEXT_PUBLIC_TELEGRAM_CHANNEL?.trim() ?? '',
 } as const;
 
 export function requireDeployment(): StockPairDeployment {

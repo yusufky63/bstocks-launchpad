@@ -6,6 +6,7 @@ import { cookieToInitialState } from 'wagmi';
 
 import { AppShell } from '@/components/layout/app-shell';
 import { Providers } from '@/components/providers';
+import { publicEnv } from '@/lib/env';
 import { BSTOCKS_X_HANDLE } from '@/lib/twitter';
 import { getWagmiConfig } from '@/lib/wagmi';
 
@@ -35,7 +36,7 @@ const mono = localFont({
 });
 
 /** Official production origin as the fallback so share links and wallet metadata never point at localhost. */
-const APP_URL = (process.env.NEXT_PUBLIC_APP_URL ?? (process.env.NODE_ENV === 'production' ? 'https://launchpad.basestocks.finance' : 'http://localhost:3000')).replace(/\/$/u, '');
+const APP_URL = publicEnv.appUrl;
 
 const DESCRIPTION = 'Launch a token on Base that trades against a Coinbase tokenized stock. Fixed supply, permanent Uniswap v4 liquidity, fees paid in the stock.';
 
