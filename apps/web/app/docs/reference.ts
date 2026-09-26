@@ -116,7 +116,7 @@ export const THRESHOLDS: readonly Threshold[] = [
   { setting: 'Buy-at-launch tolerance', range: '0.5% to 5% · default 2% · presets 1, 2, 3, 5%', behaviour: 'Covers the Chainlink price moving before the launch lands. Not remembered between visits.' },
   { setting: 'Buy-at-launch share', range: '5% amber · 15% red · 50% blocked', behaviour: "Share of supply, checked at review and again right before sending. Red needs a tick. The 50% block is this site's; the contract has no cap." },
   { setting: 'Deadline', range: '10 minutes', behaviour: 'Trades, and launches through launchWithOptions or launchAndBuy. Counted from the later of the latest block and your clock, after any approval confirms.' },
-  { setting: 'Feed age', range: '7 days onchain · 1 hour on this site', behaviour: 'Older than 7 days, a launch reverts. Older than 1 hour, the create form says the market is closed and uses the last price.' },
+  { setting: 'Feed age', range: '7 days onchain', behaviour: 'A launch reverts when the feed is older than 7 days. The create form uses the latest Chainlink value to estimate the USDC equivalent.' },
 ];
 
 /** Base mainnet: block 0 at this unix time, then one block every 2 seconds. */

@@ -14,13 +14,13 @@ import { Sheet } from '@/components/ui/sheet';
 import { bpsToPct, formatPct, formatRatio, formatUsd } from '@/lib/format';
 import { impactLevel, slippageLevel } from '@/lib/settings';
 import { BUSY_STATES, describeTradeError, executeSwap, minOutFor, type TradeState } from '@/lib/trade';
-import type { MarketView, QuoteView } from '@/lib/types';
+import type { QuoteView, TradeMarket } from '@/lib/types';
 
 interface Props {
   open: boolean;
   onClose: () => void;
   onDone?: (hash: Hash) => void;
-  market: MarketView;
+  market: TradeMarket;
   quote: QuoteView;
   amountIn: bigint;
   slippageBps: number;
@@ -67,6 +67,7 @@ export function TradeReviewSheet({ open, onClose, onDone, market, quote, amountI
   const impactPct = formatPct(quote.priceImpactPercent, { sign: false });
   // Price impact never blocks a trade by itself; at the severe tier it takes one deliberate tick.
   const needsAck = impact === 'severe' && !impactAck;
+  const canConfirm = state === 'IDLE' || state === 'FAILED';
 
   const reset = useCallback(() => {
     setState('IDLE');
@@ -91,6 +92,7 @@ export function TradeReviewSheet({ open, onClose, onDone, market, quote, amountI
   }, [state, txHash, onDone]);
 
   const run = async () => {
+    if (needsAck || busy) return;
     if (!address || !walletClient || !publicClient) {
       setError('Connect a wallet on Base first.');
       setState('FAILED');
@@ -126,7 +128,7 @@ export function TradeReviewSheet({ open, onClose, onDone, market, quote, amountI
           <Button variant="secondary" full onClick={handleClose}>
             Close
           </Button>
-          <Button full onClick={() => void run()}>
+          <Button full disabled={needsAck} onClick={() => void run()}>
             Try again
           </Button>
         </div>
@@ -163,7 +165,7 @@ export function TradeReviewSheet({ open, onClose, onDone, market, quote, amountI
         </div>
 
         <div>
-          <KeyValue k="Value" v={usdValue === null ? `${formatRatio(stockAmount)} ${market.stock.symbol}` : `${formatUsd(usdValue)}${market.stockFeedStatus !== 'live' ? ' · last close' : ''}`} />
+          <KeyValue k="Value" v={usdValue === null ? `${formatRatio(stockAmount)} ${market.stock.symbol}` : `${formatUsd(usdValue)}${market.stockFeedStatus === 'unknown' ? ' · launch quote' : market.stockFeedStatus === 'holding' ? ' · last close' : ''}`} />
           <KeyValue k="Price" v={formatRatio(quote.executionPrice, `${market.stock.symbol} / ${market.symbol}`)} />
           <KeyValue k="Price impact" v={<span className={cx(impact === 'warn' && 'text-warning-fg', impact === 'severe' && 'text-danger-fg')}>{formatPct(quote.priceImpactPercent, { sign: true })}</span>} />
           <KeyValue k={`Fee · in ${market.stock.symbol}`} v={bpsToPct(quote.feeBps)} />
@@ -173,13 +175,13 @@ export function TradeReviewSheet({ open, onClose, onDone, market, quote, amountI
           <KeyValue k="Execution" v={mode === 'batched' ? 'Approve + swap · one confirmation' : mode === 'sequential' ? 'Approve, then swap' : '—'} />
         </div>
 
-        {slippageLevel(slippageBps) === 'high' && state === 'IDLE' && (
+        {slippageLevel(slippageBps) === 'high' && canConfirm && (
           <Banner tone="warning">
             Slippage is {bpsToPct(slippageBps)}. You accept as little as {formatAmount(minOut, outputDecimals, buy ? 2 : 6)} {outputSymbol}, {bpsToPct(slippageBps)} below the quote.
           </Banner>
         )}
-        {impact === 'warn' && state === 'IDLE' && <Banner tone="warning">Price impact above 5%: this order moves the pool by {impactPct}.</Banner>}
-        {impact === 'severe' && state === 'IDLE' && (
+        {impact === 'warn' && canConfirm && <Banner tone="warning">Price impact above 5%: this order moves the pool by {impactPct}.</Banner>}
+        {impact === 'severe' && canConfirm && (
           <Banner tone="danger">
             <span className="block">
               Very high price impact: this trade moves the price by {impactPct}.{' '}

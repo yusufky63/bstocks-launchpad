@@ -193,7 +193,7 @@ export function LaunchReviewSheet({
         {plan.buy && quote && (
           <div className="border border-line rounded-[8px] px-3 py-1">
             <div className="pt-2 font-mono text-[10px] uppercase tracking-[0.12em] text-ink-muted">Buy at launch</div>
-            <KeyValue k="You spend" v={`${stockText(plan.buy.stockIn)} ≈ ${stockUsdText(plan.buy.stockIn)}`} />
+            <KeyValue k="You spend" v={`${stockText(plan.buy.stockIn)} · ≈ ${stockUsdText(plan.buy.stockIn).replace('$', '')} USDC`} />
             <KeyValue k="You receive" v={`≈ ${formatAmount(quote.tokensOut, 18, 2)} ${plan.symbol}`} />
             <KeyValue k="Share of supply" v={`${(Number(quote.supplyPpm) / 10_000).toFixed(2)}%`} />
             <KeyValue k="Minimum received" v={`${formatAmount(devBuyMinOut(quote.tokensOut, plan.buy.toleranceBps), 18, 2)} ${plan.symbol}`} />

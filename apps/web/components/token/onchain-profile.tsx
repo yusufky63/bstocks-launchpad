@@ -47,10 +47,13 @@ export function OnchainProfile({ market, factory, contentAddressed }: { market: 
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [lockOpen, setLockOpen] = useState(false);
-  const [description, setDescription] = useState(market.description ?? '');
-  const [website, setWebsite] = useState(market.website ?? '');
-  const [twitter, setTwitter] = useState(market.twitter ?? '');
-  const [telegram, setTelegram] = useState(market.telegram ?? '');
+  // Only fields the creator has touched are local. Metadata can arrive after the launch row,
+  // or after an onchain edit, while this component is already mounted.
+  const [draft, setDraft] = useState<Partial<Record<'description' | 'website' | 'twitter' | 'telegram', string>>>({});
+  const description = draft.description ?? market.description ?? '';
+  const website = draft.website ?? market.website ?? '';
+  const twitter = draft.twitter ?? market.twitter ?? '';
+  const telegram = draft.telegram ?? market.telegram ?? '';
   const [image, setImage] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [confirmText, setConfirmText] = useState('');
@@ -92,10 +95,10 @@ export function OnchainProfile({ market, factory, contentAddressed }: { market: 
       setBusy('Pinning the profile to IPFS…');
       const form = new FormData();
       form.set('token', token);
-      form.set('description', description.trim());
-      form.set('website', website.trim());
-      form.set('twitter', twitter.trim());
-      form.set('telegram', telegram.trim());
+      if (draft.description !== undefined) form.set('description', draft.description.trim());
+      if (draft.website !== undefined) form.set('website', draft.website.trim());
+      if (draft.twitter !== undefined) form.set('twitter', draft.twitter.trim());
+      if (draft.telegram !== undefined) form.set('telegram', draft.telegram.trim());
       if (image) form.set('image', image);
       const response = await fetch('/api/metadata', { method: 'POST', body: form });
       const body = (await response.json()) as { contractURI?: string; error?: { message: string } };
@@ -127,7 +130,15 @@ export function OnchainProfile({ market, factory, contentAddressed }: { market: 
 
   return (
     <>
-      <Button variant="secondary" size="sm" onClick={() => setOpen(true)}>
+      <Button variant="secondary" size="sm" onClick={() => {
+        setDraft({});
+        setImage(null);
+        if (preview) URL.revokeObjectURL(preview);
+        setPreview(null);
+        setError(null);
+        setDone(null);
+        setOpen(true);
+      }}>
         <Pencil size={13} strokeWidth={1.75} /> Edit profile
       </Button>
       <Sheet
@@ -175,11 +186,11 @@ export function OnchainProfile({ market, factory, contentAddressed }: { market: 
               />
             </label>
           </div>
-          <TextArea label="Description" maxLength={1_000} value={description} onChange={(e) => setDescription(e.target.value)} hint={`${description.length}/1000`} />
-          <Input label="Website" type="url" value={website} onChange={(e) => setWebsite(e.target.value)} placeholder="https://" autoComplete="off" />
+          <TextArea label="Description" maxLength={1_000} value={description} onChange={(e) => setDraft((current) => ({ ...current, description: e.target.value }))} hint={`${description.length}/1000`} />
+          <Input label="Website" type="url" value={website} onChange={(e) => setDraft((current) => ({ ...current, website: e.target.value }))} placeholder="https://" autoComplete="off" />
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Input label="X" value={twitter} onChange={(e) => setTwitter(e.target.value)} placeholder="@handle or x.com/handle" autoComplete="off" autoCapitalize="none" spellCheck={false} />
-            <Input label="Telegram" value={telegram} onChange={(e) => setTelegram(e.target.value)} placeholder="@group or t.me/group" autoComplete="off" autoCapitalize="none" spellCheck={false} />
+            <Input label="X" value={twitter} onChange={(e) => setDraft((current) => ({ ...current, twitter: e.target.value }))} placeholder="@handle or x.com/handle" autoComplete="off" autoCapitalize="none" spellCheck={false} />
+            <Input label="Telegram" value={telegram} onChange={(e) => setDraft((current) => ({ ...current, telegram: e.target.value }))} placeholder="@group or t.me/group" autoComplete="off" autoCapitalize="none" spellCheck={false} />
           </div>
           {error && !lockOpen && <Banner tone="danger">{error}</Banner>}
           {done && (

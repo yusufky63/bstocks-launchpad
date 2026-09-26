@@ -157,7 +157,7 @@ pnpm dev                # http://localhost:3000
 
 ## API
 
-All responses are JSON, computed from the indexer's tables plus live pool reads. Missing data is `null`, never a
+Most responses use the indexer's tables plus live pool reads. A confirmed launch can also be quoted and traded directly from its factory and pool before indexing. Missing data is `null`, never a
 placeholder. Server reads are memoised for 3–15 s (`apps/web/lib/cache.server.ts`) so a burst of visitors costs one
 database round trip per window.
 
@@ -168,6 +168,7 @@ database round trip per window.
 - `GET /api/tokens/:address` (falls back to a direct factory read while the indexer catches up; includes
   `launch.creatorBuy` and `profile.onchain`)
 - `GET /api/tokens/:address/swaps|candles|holders`
+- `GET /api/tokens/:address/dex-paid` (DEX Screener paid-order status: approved, pending, none or unavailable; cached for 5 minutes)
 - `GET /api/wallet/:address` (created, holdings, earnings, claimable, recent trades)
 - `POST /api/quote` `{ token, side: buy|sell, amountIn }` -> Uniswap v4 Quoter result incl. hook fee
 - `POST /api/metadata` multipart `{ name, symbol, description, website, twitter, telegram, image }` -> `ipfs://`

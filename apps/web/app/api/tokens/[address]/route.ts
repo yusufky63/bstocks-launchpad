@@ -1,7 +1,7 @@
 import { findStock } from '@stockpair/core';
 
 import { error, json, parseAddressParam } from '@/lib/api.server';
-import { cached, TTL } from '@/lib/cache.server';
+import { cached } from '@/lib/cache.server';
 import { getDb } from '@/lib/db.server';
 import { readLaunchOnchain } from '@/lib/onchain.server';
 import { readTokenCached, readTokenDetails } from '@/lib/token.server';
@@ -27,8 +27,8 @@ export async function GET(_request: Request, { params }: Context): Promise<Respo
     return json({ status: 'indexed', market: indexed.market, details, launch: indexed.launch, profile: indexed.profile });
   }
 
-  const onchain = await cached(`onchain:${token}`, TTL.chain, () => readLaunchOnchain(token));
+  const onchain = await cached(`onchain:${token}`, 1_000, () => readLaunchOnchain(token));
   if (!onchain) return error(404, 'TOKEN_NOT_FOUND', 'No token was launched at this address.');
   const stock = findStock(onchain.stock);
-  return json({ status: 'indexing', launch: { ...onchain, stockSymbol: stock?.symbol ?? null, stockTicker: stock?.ticker ?? null } });
+  return json({ status: 'indexing', launch: { ...onchain, stockSymbol: stock?.symbol ?? null, stockTicker: stock?.ticker ?? null, stockDecimals: stock?.decimals ?? null } });
 }

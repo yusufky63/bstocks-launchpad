@@ -4,6 +4,9 @@ import type { MarketView } from './market-view';
 
 export type { MarketView };
 
+/** Fields needed to quote and trade; available from a confirmed launch before indexing. */
+export type TradeMarket = Pick<MarketView, 'token' | 'symbol' | 'factory' | 'hook' | 'stock' | 'stockUsd' | 'priceUsd' | 'priceInStock' | 'stockFeedStatus'>;
+
 export type FeedStatus = 'live' | 'holding' | 'unknown';
 
 /** One row of GET /api/stocks. */
@@ -90,7 +93,7 @@ export type TokenResponse =
   | { status: 'pending'; token: string; txHash: string | null }
   | {
       status: 'indexing';
-      launch: { token: string; stock: string; creator: string; name: string; symbol: string; contractURI: string; launchedAt: string; stockSymbol: string | null; stockTicker: string | null };
+      launch: { token: string; stock: string; creator: string; name: string; symbol: string; contractURI: string; launchedAt: string; stockSymbol: string | null; stockTicker: string | null; stockDecimals: number | null; stockUsd8: string; factory: string; hook: string };
     };
 
 export type QuoteView = {

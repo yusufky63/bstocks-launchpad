@@ -19,7 +19,7 @@ import { bpsToPct, formatPct, formatRatio, formatUsd } from '@/lib/format';
 import { qk, useQuote } from '@/lib/queries';
 import { impactLevel, useSlippage } from '@/lib/settings';
 import { minOutFor, shareOf } from '@/lib/trade';
-import type { MarketView } from '@/lib/types';
+import type { TradeMarket } from '@/lib/types';
 
 import { SlippageControl } from './slippage-control';
 import { TradeReviewSheet } from './trade-review-sheet';
@@ -27,7 +27,7 @@ import { TradeReviewSheet } from './trade-review-sheet';
 const PCT_CHIPS = [25, 50, 75, 100];
 
 /** The most important interaction in the app: amount first, live executable quote, sticky CTA. */
-export function TradePanel({ market, initialSide = 'buy', onTraded, className }: { market: MarketView; initialSide?: 'buy' | 'sell'; onTraded?: () => void; className?: string }) {
+export function TradePanel({ market, initialSide = 'buy', onTraded, onEngagedChange, className }: { market: TradeMarket; initialSide?: 'buy' | 'sell'; onTraded?: () => void; onEngagedChange?: (engaged: boolean) => void; className?: string }) {
   // Trades go through the router of the deployment that launched this token, not the newest one.
   const deployment = deploymentOf(publicEnv.deployments, market);
   const { address, isConnected, chainId } = useAccount();
@@ -38,6 +38,9 @@ export function TradePanel({ market, initialSide = 'buy', onTraded, className }:
   const [review, setReview] = useState(false);
   const [lastTx, setLastTx] = useState<Hash | null>(null);
   const { slippageBps } = useSlippage();
+
+  useEffect(() => { onEngagedChange?.(amountText !== '' || review); }, [amountText, review, onEngagedChange]);
+  useEffect(() => () => onEngagedChange?.(false), [onEngagedChange]);
 
   const [seenSide, setSeenSide] = useState(initialSide);
   if (initialSide !== seenSide) {
@@ -148,7 +151,7 @@ export function TradePanel({ market, initialSide = 'buy', onTraded, className }:
       <div className="p-4 flex flex-col gap-4">
         <div className="flex items-center justify-between gap-2 text-[12px] text-ink-secondary">
           <span>
-            {market.symbol} · {market.priceUsd === null ? 'no trades yet' : formatUsd(market.priceUsd)} <span className="text-ink-muted">{market.stockFeedStatus === 'live' ? 'live' : 'last close'}</span>
+            {market.symbol} · {market.priceUsd === null ? (market.stockFeedStatus === 'unknown' ? 'live pool quote below' : 'no trades yet') : formatUsd(market.priceUsd)} <span className="text-ink-muted">{market.stockFeedStatus === 'live' ? 'live' : market.stockFeedStatus === 'unknown' ? 'launch quote' : 'last close'}</span>
           </span>
           <span className="font-mono num">{formatRatio(market.priceInStock, market.stock.symbol)}</span>
         </div>

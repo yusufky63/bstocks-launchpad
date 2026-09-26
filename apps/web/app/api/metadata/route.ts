@@ -7,7 +7,7 @@ import { error, json, parseAddressParam } from '@/lib/api.server';
 import { getDb } from '@/lib/db.server';
 import { callerKey, rateLimit } from '@/lib/rate-limit.server';
 import { PinError, pinMetadata } from '@/lib/pinata.server';
-import { currentProfileImage } from '@/lib/profile-document.server';
+import { currentProfileDocument } from '@/lib/profile-document.server';
 import { normalizeTelegram, websiteSchema } from '@/lib/profile';
 import { normalizeTwitter } from '@/lib/twitter';
 
@@ -63,9 +63,11 @@ export async function POST(request: Request): Promise<Response> {
     telegram: form.get('telegram') ?? '',
   };
 
+  const replacementImage = form.get('image');
+
   let name: string;
   let symbol: string;
-  let editableToken: Address | null = null;
+  let existingImageUri: string | null = null;
   let profile: z.infer<typeof profileSchema>;
   const tokenField = form.get('token');
   if (tokenField !== null) {
@@ -75,10 +77,21 @@ export async function POST(request: Request): Promise<Response> {
     if (!market) return error(404, 'TOKEN_NOT_FOUND', 'No token was launched at this address.');
     if (!market.metadata_editable) return error(409, 'PROFILE_FIXED', "This token's profile is fixed.");
     if (market.metadata_locked_at) return error(409, 'PROFILE_LOCKED', "This token's profile is locked for good.");
-    const parsed = profileSchema.safeParse(profileFields);
+    // The indexed row may trail an onchain edit. Preserve untouched fields from the document the
+    // token points at right now, including its image, rather than sending stale form defaults.
+    const current = await currentProfileDocument(token as Address, {
+      allowInvalidImage: replacementImage instanceof File && replacementImage.size > 0,
+    });
+    if (!current.ok) return error(409, current.code, current.message);
+    const parsed = profileSchema.safeParse({
+      description: form.get('description') ?? current.description,
+      website: form.get('website') ?? current.website,
+      twitter: form.get('twitter') ?? current.twitter,
+      telegram: form.get('telegram') ?? current.telegram,
+    });
     if (!parsed.success) return error(400, 'INVALID_FIELDS', 'Check the description and website.');
     ({ name, symbol } = market);
-    editableToken = token as Address;
+    existingImageUri = current.image;
     profile = parsed.data;
   } else {
     const parsed = launchSchema.safeParse({ ...profileFields, name: form.get('name'), symbol: form.get('symbol') });
@@ -92,19 +105,10 @@ export async function POST(request: Request): Promise<Response> {
   const telegram = normalizeTelegram(profile.telegram || undefined);
   if (profile.telegram && !telegram) return error(400, 'INVALID_TELEGRAM', 'Use a Telegram handle like @name or a t.me link.');
 
-  const file = form.get('image');
+  const file = replacementImage;
   let image: { bytes: ArrayBuffer; type: string; fileName: string } | null = null;
   if (file instanceof File && file.size > 0) {
     image = { bytes: await file.arrayBuffer(), type: file.type, fileName: file.name || 'image' };
-  }
-
-  // An update with no new image keeps the one the token names onchain now, never the indexed row's
-  // copy, which can trail an update that just landed. If that cannot be read, the caller uploads one.
-  let existingImageUri: string | null = null;
-  if (editableToken && !image) {
-    const current = await currentProfileImage(editableToken);
-    if (!current.ok) return error(409, current.code, current.message);
-    existingImageUri = current.image;
   }
 
   try {

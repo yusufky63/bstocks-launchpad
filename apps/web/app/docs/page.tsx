@@ -90,7 +90,7 @@ export default function DocsPage() {
         <div className="flex flex-col gap-5 min-w-0">
           <Section id="architecture">
             <p>
-              The launchpad has four parts. <strong>Contracts</strong> on Base (a factory, a Uniswap v4 hook and a small router) hold every rule that matters: supply, liquidity, fees and who may claim them. An <strong>indexer</strong> follows Base, waits for confirmations and stores confirmed launches, swaps, transfers, profile changes and fee events. The <strong>web app</strong> renders pages and a public JSON API from those rows and talks to the chain only for quotes and live pool state. A shared <strong>core</strong> library holds the stock registry, the price math, the launch quote and the event decoders used by all of them.
+              The launchpad has four parts. <strong>Contracts</strong> on Base (a factory, a Uniswap v4 hook and a small router) hold every rule that matters: supply, liquidity, fees and who may claim them. An <strong>indexer</strong> follows Base, waits for confirmations and stores confirmed launches, swaps, transfers, profile changes and fee events. The <strong>web app</strong> renders pages and a public JSON API from those rows; for new launches it also reads the factory directly so trading works while indexing catches up. A shared <strong>core</strong> library holds the stock registry, the price math, the launch quote and the event decoders used by all of them.
             </p>
             <p>
               Everything on a page is a confirmed event, a number derived from confirmed events, or a live <code>eth_call</code> — with one exception, and it is signed: the creator of a token with a fixed profile may replace its presentation fields, and the server stores that only after checking the signature against the creator address recorded onchain. Nothing else the web app receives from a client is ever stored.
@@ -206,7 +206,7 @@ export default function DocsPage() {
               What it cannot do: at the token level the role also covers the name, symbol and extra-metadata setters. Only the factory&apos;s code keeps them out of reach, and that code has no path to them: no rename function, no generic call, no proxy, no upgrade. Tests pin the factory&apos;s complete list of state-changing functions and scan its bytecode for the rename selectors.
             </p>
             <p>
-              On this site an editable token is edited onchain only: the signed off-chain editor is closed for it. The token page shows an &quot;Editable profile&quot; badge, how many times the profile changed and when. Until the profile is locked, whoever holds the creator&apos;s key can change its links.
+              On this site an editable token is edited onchain only: the signed off-chain editor is closed for it. The token page shows how many times the profile changed and when. Until the profile is locked, whoever holds the creator&apos;s key can change its links.
             </p>
           </Section>
 
@@ -256,20 +256,21 @@ export default function DocsPage() {
           </Section>
 
           <Section id="api">
-            <p>All responses are JSON, computed from the indexer&apos;s tables plus live pool reads. Missing data is <code>null</code>, never a placeholder. Reads are memoised server-side for 3 to 15 seconds.</p>
+            <p>Most responses use the indexer&apos;s tables plus live pool reads. A confirmed launch can be quoted and traded directly from its factory and pool before indexing. Missing data is <code>null</code>, never a placeholder. Reads are memoised server-side for 3 to 15 seconds.</p>
             <KeyValue k="GET /api/markets" v="?stock=&q=&creator=&limit=&offset= · list of markets" mono={false} />
             <KeyValue k="GET /api/stocks" v="the 13 quote stocks with Chainlink price and feed status" mono={false} />
             <KeyValue k="GET /api/tokens/:address" v="market row, fees, lifetime figures, pool reserves, links, launch.creatorBuy, profile.onchain" mono={false} />
             <KeyValue k="GET /api/tokens/:address/swaps" v="?limit=&before= · trades with dev flag" mono={false} />
             <KeyValue k="GET /api/tokens/:address/candles" v="one-minute OHLCV in stock units" mono={false} />
             <KeyValue k="GET /api/tokens/:address/holders" v="ranked balances with labels" mono={false} />
+            <KeyValue k="GET /api/tokens/:address/dex-paid" v="DEX Screener paid-order status · approved, pending, none or unavailable · cached for five minutes" mono={false} />
             <KeyValue k="GET /api/tokens/:address/image" v="the token image from our own origin, capped at 5 MB · linked with ?v= and the first 12 hex of the image URI's sha256, so a new image gets a new URL · API responses give it as an absolute URL · cached for good only when the image is ipfs:// and a bare CID" mono={false} />
             <KeyValue k="GET /api/names" v="?a=0x..,0x.. · Basenames for up to 100 addresses" mono={false} />
             <KeyValue k="GET|POST /api/tokens/:address/profile" v="creator-signed profile of a fixed-profile token: read, or update with payload + image · 409 for an editable token" mono={false} />
             <KeyValue k="GET /api/wallet/:address" v="created, holdings, claimable, earnings, trades" mono={false} />
             <KeyValue k="GET /api/stats" v="platform totals and per-stock fees and volume" mono={false} />
             <KeyValue k="GET /api/activity" v="?limit=&token=&actor= · launches and swaps feed" mono={false} />
-            <KeyValue k="POST /api/quote" v="{ token, side, amountIn } · exact-in quote from the v4 Quoter" mono={false} />
+            <KeyValue k="POST /api/quote" v="{ token, side, amountIn } · exact-in quote from the v4 Quoter, including confirmed launches awaiting indexing" mono={false} />
             <KeyValue k="POST /api/metadata" v="multipart · pins image and ERC-7572 JSON to IPFS · with token, the name and symbol come from the launch record" mono={false} />
             <KeyValue k="GET /api/health" v="database, schema version, contracts, launch hooks no configured deployment covers, indexer lag, chain head · ok is false while the schema is behind this build or a launch hook is not configured" mono={false} />
             <KeyValue k="GET /api/region" v="whether the caller's country is one this interface refuses" mono={false} />

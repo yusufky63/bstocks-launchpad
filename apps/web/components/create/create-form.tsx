@@ -3,7 +3,7 @@
 import { ArrowUpRight, ImagePlus } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useMemo, useState, useSyncExternalStore } from 'react';
-import { erc20Abi, parseAbi, zeroAddress, type Address } from 'viem';
+import { erc20Abi, zeroAddress, type Address } from 'viem';
 import { useAccount, useReadContracts } from 'wagmi';
 import { base } from 'wagmi/chains';
 
@@ -15,7 +15,7 @@ import { Checkbox, Input, Switch, TextArea } from '@/components/ui/controls';
 import { Banner } from '@/components/ui/display';
 import { Button, Chip, KeyValue, Module, ModuleHeader, cx } from '@/components/ui/primitives';
 import { publicEnv } from '@/lib/env';
-import { bpsToPct, formatDateTime, formatNumber, formatUsd } from '@/lib/format';
+import { bpsToPct, formatNumber, formatUsd } from '@/lib/format';
 import {
   DEV_BUY_BLOCK_BPS,
   DEV_BUY_CONFIRM_BPS,
@@ -39,10 +39,6 @@ import { LaunchReviewSheet, type ReviewedLaunch } from './launch-review-sheet';
 
 type Errors = Partial<Record<'name' | 'symbol' | 'description' | 'website' | 'twitter' | 'telegram' | 'image' | 'stock' | 'buy', string>>;
 
-const feedAbi = parseAbi(['function latestRoundData() view returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)']);
-
-/** The feed holds its last price while the stock market is shut; past this age the notice says so. */
-const MARKET_CLOSED_AFTER_S = 60 * 60;
 const BSTOCKS_URL = 'https://basestocks.finance/stocks';
 
 const subscribeNever = () => () => {};
@@ -148,13 +144,11 @@ export function CreateForm({ initialStocks }: { initialStocks?: StocksResponse }
     contracts: [
       { address: deployment?.factory, abi: stockPairFactoryAbi, functionName: 'previewOpening', args: stock && predicted ? [stock as Address, predicted] : undefined },
       { address: stock as Address | undefined, abi: erc20Abi, functionName: 'balanceOf', args: address ? [address] : undefined },
-      { address: selected?.feed as Address | undefined, abi: feedAbi, functionName: 'latestRoundData' },
     ],
     query: { enabled: Boolean(deployment && stock && predicted), ...liveQuery },
   });
   const opening = stockReads.data?.[0]?.result as readonly [bigint, number, bigint] | undefined;
   const balance = stockReads.data?.[1]?.result as bigint | undefined;
-  const round = stockReads.data?.[2]?.result as readonly [bigint, bigint, bigint, bigint, bigint] | undefined;
 
   const decimals = selected?.decimals ?? 8;
   const stockSymbol = selected?.symbol ?? 'the stock';
@@ -165,8 +159,10 @@ export function CreateForm({ initialStocks }: { initialStocks?: StocksResponse }
   const stockUsd8 = opening?.[2];
   const stockUsd = stockUsd8 === undefined ? null : Number(stockUsd8) / 1e8;
   const usdOf = (raw: bigint) => (stockUsd === null ? null : (Number(raw) / 10 ** decimals) * stockUsd);
-  const feedUpdatedAt = round ? Number(round[3]) : null;
-  const marketClosed = feedUpdatedAt !== null && Date.now() / 1000 - feedUpdatedAt > MARKET_CLOSED_AFTER_S;
+  const usdcOf = (raw: bigint) => {
+    const value = usdOf(raw);
+    return value === null ? '—' : `≈ ${formatUsd(value).replace('$', '')} USDC`;
+  };
 
   const buyActive = buyOn && !legacy;
   const stockIn = buyActive ? parseAmount(buyText, decimals) : null;
@@ -415,18 +411,24 @@ export function CreateForm({ initialStocks }: { initialStocks?: StocksResponse }
                     <div className="flex items-center justify-between gap-3 font-mono num text-[12px] text-ink-muted">
                       <span>
                         Balance: {balance === undefined ? '—' : `${formatAmount(balance, decimals, 6)} ${stockSymbol}`}
-                        {balance !== undefined && balance > 0n && (
-                          <>
-                            {' · '}
-                            <button type="button" className="text-primary font-medium" onClick={() => setBuyText(formatAmount(balance, decimals, decimals).replaceAll(',', ''))}>
-                              Max
-                            </button>
-                          </>
-                        )}
+
                       </span>
-                      <span>{stockIn !== null && stockIn > 0n ? `≈ ${formatUsd(usdOf(stockIn))} at the Chainlink price` : ''}</span>
+                      <span>{stockIn !== null && stockIn > 0n ? `${usdcOf(stockIn)} equivalent` : ''}</span>
                     </div>
                   </div>
+                  {balance !== undefined && balance > 0n && (
+                    <div className="flex flex-wrap gap-1.5" aria-label="Share of stock balance to spend">
+                      {[25, 50, 75, 100].map((percent) => (
+                        <Chip key={percent} onClick={() => {
+                          const amount = (balance * BigInt(percent)) / 100n;
+                          setBuyText(amount === 0n ? '' : formatAmount(amount, decimals, decimals).replaceAll(',', ''));
+                          setShareAck(false);
+                        }} className="h-8 min-h-[32px] px-2.5 text-[12px]">
+                          {percent === 100 ? '100% · Max' : `${percent}%`}
+                        </Chip>
+                      ))}
+                    </div>
+                  )}
                   {insufficient && (
                     <p className="text-[12px] text-danger-fg">
                       Not enough {stockSymbol}.{' '}
@@ -436,11 +438,7 @@ export function CreateForm({ initialStocks }: { initialStocks?: StocksResponse }
                     </p>
                   )}
                   {!onBase && <p className="text-[12px] text-ink-muted">Connect a wallet on Base to see the exact quote.</p>}
-                  {marketClosed && feedUpdatedAt !== null && (
-                    <Banner tone="info">
-                      {ticker}&apos;s market is closed. The opening price uses the last Chainlink price ({formatDateTime(new Date(feedUpdatedAt * 1000).toISOString())}).
-                    </Banner>
-                  )}
+                  <p className="text-[12px] text-ink-muted">USDC figures are estimates from the stock's USD feed (1 USDC ≈ $1); the transaction spends {stockSymbol}.</p>
 
                   {quote && stockIn !== null && (
                     <div>
@@ -534,7 +532,7 @@ export function CreateForm({ initialStocks }: { initialStocks?: StocksResponse }
               <label htmlFor="editable-profile" className="min-w-0 cursor-pointer">
                 <span className="block text-[14px] font-medium">Let me update the image, description and links later</span>
                 <span className="block mt-1 text-[13px] text-ink-secondary max-w-[70ch]">
-                  Off: the token&apos;s onchain contract URI never changes, and you can still update the image, description and links this site shows by signing a message with this wallet (no gas). On: only this wallet can later point the token at a new profile onchain, through the BStocks launch factory, one transaction per change. The name, symbol and supply never change either way. Buyers see an Editable profile badge until you lock it, and you can lock it for good at any time. Leave this off unless you want the onchain profile itself to change later.
+                  Off: the token&apos;s onchain contract URI never changes, and you can still update the image, description and links this site shows by signing a message with this wallet (no gas). On: only this wallet can later point the token at a new profile onchain, through the BStocks launch factory, one transaction per change. The name, symbol and supply never change either way. You can lock that editing permission for good at any time. Leave this off unless you want the onchain profile itself to change later.
                 </span>
               </label>
               <Switch id="editable-profile" checked={editable} onChange={setEditable} label="Let me update the image, description and links later" />

@@ -5,7 +5,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Globe, Send } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import { XMark } from '@/components/brand/logo';
 import { PairBadge } from '@/components/markets/market-rows';
@@ -20,9 +20,10 @@ import { qk, useSwaps, useToken } from '@/lib/queries';
 import { useIsDesktop } from '@/lib/settings';
 import { telegramHandle } from '@/lib/profile';
 import { twitterHandle } from '@/lib/twitter';
-import type { LaunchInfo, MarketView, TokenResponse } from '@/lib/types';
+import type { LaunchInfo, MarketView, TokenResponse, TradeMarket } from '@/lib/types';
 
 import { ChartModule } from './chart-module';
+import { DexPaid } from './dex-paid';
 import { EditProfile } from './edit-profile';
 import { OnchainProfile } from './onchain-profile';
 import { TokenRecords } from './token-records';
@@ -48,7 +49,15 @@ export function TokenView({ address, initialData }: { address: string; initialDa
       setMobileTrade(true);
     }
   }
-  const view = data ?? initialData;
+  const liveView = data ?? initialData;
+  const [earlyView, setEarlyView] = useState<TokenResponse | null>(initialData.status === 'indexing' ? initialData : null);
+  const [earlyTradeActive, setEarlyTradeActive] = useState(false);
+  useEffect(() => {
+    if (liveView.status === 'indexing') setEarlyView(liveView);
+  }, [liveView]);
+  // Keep the live trading panel mounted while someone enters an amount or confirms a swap.
+  const view = (earlyTradeActive || (!isDesktop && mobileTrade)) && earlyView?.status === 'indexing' ? earlyView : liveView;
+  const onEarlyEngagedChange = useCallback((engaged: boolean) => setEarlyTradeActive(engaged), []);
   const swaps = useSwaps(address, view.status === 'indexed');
 
   if (view.status === 'pending') {
@@ -59,7 +68,7 @@ export function TokenView({ address, initialData }: { address: string; initialDa
         </div>
         <h1 className="display text-[32px] md:text-[40px] leading-none">Your token is on its way.</h1>
         <p className="text-ink-secondary max-w-[60ch]">
-          The launch transaction is in flight. This page turns into the token page by itself the moment the block lands and the indexer records it, usually within ten to twenty seconds.
+          The launch transaction is in flight. This page turns into the token page by itself as soon as the block lands. You can trade before market history finishes loading.
         </p>
         <AddressLabel address={view.token} explorer kind="token" chars={10} />
         {view.txHash && <TxLink hash={view.txHash}>Launch transaction</TxLink>}
@@ -74,23 +83,53 @@ export function TokenView({ address, initialData }: { address: string; initialDa
 
   if (view.status === 'indexing') {
     const l = view.launch;
+    const earlyMarket: TradeMarket | null = l.stockDecimals === null ? null : {
+      token: l.token,
+      symbol: l.symbol,
+      factory: l.factory,
+      hook: l.hook,
+      stock: { address: l.stock, symbol: l.stockSymbol ?? 'STOCK', ticker: l.stockTicker ?? '', decimals: l.stockDecimals },
+      stockUsd: Number(l.stockUsd8) / 1e8,
+      priceUsd: null,
+      priceInStock: null,
+      stockFeedStatus: 'unknown',
+    };
+    const onTraded = () => { void qc.invalidateQueries({ queryKey: qk.token(l.token) }); };
     return (
-      <Module ticks className="p-6 md:p-10 flex flex-col gap-4 items-start">
-        <div className="eyebrow">
-          <span className="live-dot" /> Confirmed onchain · indexing
+      <div className="flex flex-col gap-5">
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_380px] gap-5 items-start">
+          <Module ticks className="p-6 md:p-10 flex flex-col gap-4 items-start">
+            <div className="eyebrow"><span className="live-dot" /> Token live · market history loading</div>
+            <h1 className="display text-[32px] md:text-[40px] leading-none">
+              {l.name} <span className="text-ink-muted font-mono text-[14px] tracking-normal font-normal">{l.symbol}</span>
+            </h1>
+            <p className="text-ink-secondary max-w-[60ch]">
+              Created {formatDateTime(l.launchedAt)} against {l.stockSymbol ?? shortAddress(l.stock)}. Buy and sell quotes come from the live pool now. Trades, holders and charts appear after the indexer records the confirmed blocks.
+            </p>
+            <AddressLabel address={l.token} explorer kind="token" chars={10} />
+            <Banner tone="info">Trading is open now. Market history waits for three confirmations; a rare Base reorg could invalidate an early trade.</Banner>
+            {!earlyMarket && <Banner tone="warning">This stock is not configured for trading on this site yet.</Banner>}
+          </Module>
+          {isDesktop && earlyMarket && (
+            <StickyPanel><Module ticks><TradePanel market={earlyMarket} initialSide={side} onTraded={onTraded} onEngagedChange={onEarlyEngagedChange} /></Module></StickyPanel>
+          )}
         </div>
-        <h1 className="display text-[32px] md:text-[40px] leading-none">
-          {l.name} <span className="text-ink-muted font-mono text-[14px] tracking-normal font-normal">{l.symbol}</span>
-        </h1>
-        <p className="text-ink-secondary max-w-[60ch]">
-          Created {formatDateTime(l.launchedAt)} against {l.stockSymbol ?? shortAddress(l.stock)}. Trades, holders and the chart appear as soon as the indexer records the block, usually within a few seconds. This page refreshes itself.
-        </p>
-        <AddressLabel address={l.token} explorer kind="token" chars={10} />
-        <Banner tone="info">The indexer waits for three block confirmations before recording a launch, so a reorg can never show a token that does not exist.</Banner>
-      </Module>
+        {!isDesktop && earlyMarket && (
+          <>
+            <div className="fixed inset-x-0 bottom-14 z-20 border-t border-line bg-canvas px-4 py-2 grid grid-cols-2 gap-2 [padding-bottom:calc(8px+env(safe-area-inset-bottom))]">
+              <Button size="lg" onClick={() => { setSide('buy'); setMobileTrade(true); }}>Buy</Button>
+              <Button size="lg" variant="ink" onClick={() => { setSide('sell'); setMobileTrade(true); }}>Sell</Button>
+            </div>
+            <Sheet open={mobileTrade} onClose={() => { setMobileTrade(false); setEarlyTradeActive(false); if (tradeParam) router.replace('/token/' + l.token); }} title={l.symbol} wide>
+              <div className="-mx-5 -my-4">
+                <TradePanel market={earlyMarket} initialSide={side} onTraded={onTraded} onEngagedChange={onEarlyEngagedChange} />
+              </div>
+            </Sheet>
+          </>
+        )}
+      </div>
     );
   }
-
   const market = view.market;
   const details = view.details;
   const { launch, profile } = view;
@@ -127,8 +166,7 @@ export function TokenView({ address, initialData }: { address: string; initialDa
                       <Badge tone="primary" className="hover:bg-primary/15 transition-fast">creator <Named address={market.creator} /></Badge>
                     </Link>
                     <DevBuyChip launch={launch} market={market} />
-                    {/* No badge for fixed profiles: their signed off-chain profile still applies. */}
-                    {profile?.onchain === 'editable' && <Badge tone="warning" title="The creator can still replace the image, description and links onchain.">Editable profile</Badge>}
+                    <DexPaid token={market.token} />
                     {profile?.onchain === 'locked' && <Badge title="The creator gave up editing for good.">Profile locked</Badge>}
                   </div>
                 </div>
@@ -141,7 +179,7 @@ export function TokenView({ address, initialData }: { address: string; initialDa
                 {safeExternalUrl(market.telegram) && <IconLink href={safeExternalUrl(market.telegram)!} label={telegramHandle(market.telegram!)} icon={<Send size={13} strokeWidth={1.75} />} />}
                 {/* One editing path per token: signed off-chain for fixed profiles, onchain for editable ones. */}
                 {(!profile || profile.onchain === 'immutable') && <EditProfile key={market.profileUpdatedAt ?? 'launch'} market={market} />}
-                {profile?.onchain === 'editable' && launch?.factory && <OnchainProfile key={profile.contractUri} market={market} factory={launch.factory} contentAddressed={profile.contentAddressed} />}
+                {profile?.onchain === 'editable' && launch?.factory && <OnchainProfile key={market.token} market={market} factory={launch.factory} contentAddressed={profile.contentAddressed} />}
               </div>
             </div>
             <div className="px-4 md:px-5 pb-4 flex items-baseline gap-3 flex-wrap">

@@ -563,17 +563,41 @@ describe('launch and onchain profile in the token API', () => {
     }
   });
 
-  it('keeps no image when the current document has none, and reads nothing when a new image is sent', async () => {
+  it('keeps no image when the current document has none, and reads its other fields even with a new image', async () => {
     chain.contractUri = `ipfs://${cid('current')}`;
     const withoutImage = stubPinata({ name: 'Editable Token' });
     await withPinata(async () => expect((await postEdit()).status).toBe(200));
     expect(withoutImage[0]).not.toHaveProperty('image');
 
     const reads = chain.reads;
-    const uploads = stubPinata(null);
+    chain.contractUri = `ipfs://${cid('current')}`;
+    const uploads = stubPinata({ name: 'Editable Token', external_link: 'https://latest.example' });
     await withPinata(async () => expect((await postEdit(new File([new Uint8Array([137, 80, 78, 71])], 'logo.png', { type: 'image/png' }))).status).toBe(200));
-    expect(chain.reads).toBe(reads);
-    expect(uploads.at(-1)).toMatchObject({ image: `ipfs://${cid('newimage')}` });
+    expect(chain.reads).toBe(reads + 1);
+    expect(uploads.at(-1)).toMatchObject({ image: `ipfs://${cid('newimage')}`, external_link: 'https://latest.example' });
+  });
+
+  it('preserves untouched fields from the latest onchain document while the database is behind', async () => {
+    chain.contractUri = `ipfs://${cid('current')}`;
+    const uploads = stubPinata({
+      description: 'Latest onchain words',
+      external_link: 'https://latest.example',
+      twitter: 'https://x.com/current',
+      telegram: 'https://t.me/current',
+    });
+    const form = new FormData();
+    form.set('token', EDITABLE);
+    form.set('description', 'Only this field changed');
+    await withPinata(async () => {
+      const response = await parse(await postMetadata(new Request('http://x/api/metadata', { method: 'POST', body: form })));
+      expect(response.status).toBe(200);
+    });
+    expect(uploads).toEqual([expect.objectContaining({
+      description: 'Only this field changed',
+      external_link: 'https://latest.example',
+      twitter: 'https://x.com/current',
+      telegram: 'https://t.me/current',
+    })]);
   });
 
   it('pins nothing for fixed, unknown or malformed tokens', async () => {
