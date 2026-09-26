@@ -90,6 +90,16 @@ describe('when Telegram pushes back', () => {
     }
   });
 
+  // The one 400 that is not about the row: every post carries the same site address on its
+  // buttons, so a refused button URL is the configuration. Dropping rows for it once threw away a
+  // whole backlog that a corrected value would have posted.
+  it('keeps a row whose buttons Telegram refused, since that is the site address, not the row', async () => {
+    const { telegram } = harness([
+      { ok: false, error_code: 400, description: "Bad Request: inline keyboard button URL 'http://localhost:3000/token/0xab' is invalid: Wrong HTTP URL" },
+    ]);
+    expect(await telegram.sendMessage('-100', 'hello')).toMatchObject({ ok: false, retriable: true });
+  });
+
   it('treats a network failure as worth another go', async () => {
     const fetchImpl = (async () => {
       throw new Error('socket hang up');

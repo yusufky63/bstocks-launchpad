@@ -57,7 +57,7 @@ watch what the channel would say before pointing it at the channel.
 | `DATABASE_URL` | the same database the indexer writes |
 | `TELEGRAM_ALERTS_TOKEN` | from BotFather |
 | `TELEGRAM_ALERTS_CHANNEL_ID` | numeric, `-100…` for a channel |
-| `NEXT_PUBLIC_APP_URL` | where the buttons point (default `https://launchpad.basestocks.finance`) |
+| `NEXT_PUBLIC_APP_URL` | where the buttons point (default `https://launchpad.basestocks.finance`). Must be the public https address: Telegram refuses buttons with any other URL, and the service refuses to start on one, so a local value copied onto the host cannot burn the queue |
 | `ALERTS_MIN_TRADE_USD` | default `500` |
 | `ALERTS_MIN_TRADE_SHARE` | default `0.15` |
 | `ALERTS_MIN_TRADE_FLOOR_USD` | default `100`; the share rule never fires below this |

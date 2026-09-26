@@ -28,7 +28,16 @@ const schema = z.object({
   // A channel is addressed by its numeric id, which survives a rename; @name works for a public
   // channel but stops working the moment somebody changes it.
   TELEGRAM_ALERTS_CHANNEL_ID: z.string().min(1),
-  NEXT_PUBLIC_APP_URL: z.string().url().default('https://launchpad.basestocks.finance'),
+  // Every post links to it and puts it on inline buttons, and Telegram refuses a button whose URL is
+  // not public https: one pass against a localhost value refused the whole backlog and marked it
+  // dealt with. A wrong value here is a configuration error, not a state to run in.
+  NEXT_PUBLIC_APP_URL: z
+    .string()
+    .url()
+    .default('https://launchpad.basestocks.finance')
+    .refine((u) => u.startsWith('https://') && !/^https:\/\/(localhost|127\.0\.0\.1|\[::1\])(?::|\/|$)/iu.test(u), {
+      message: 'NEXT_PUBLIC_APP_URL must be the public https:// address of the site: posts link to it and Telegram refuses non-https button URLs',
+    }),
   ALERTS_POLL_MS: z.coerce.number().int().min(1_000).max(60_000).default(5_000),
   ALERTS_MIN_TRADE_USD: z.coerce.number().min(0).default(500),
   ALERTS_MIN_TRADE_SHARE: z.coerce.number().min(0).max(1).default(0.15),

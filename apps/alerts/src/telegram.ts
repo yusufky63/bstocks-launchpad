@@ -119,8 +119,11 @@ export class Telegram {
     const reason = failure.description ?? `http ${response.status}`;
     // 400 and 403 are about this message or this chat and will fail again identically: a malformed
     // post, or a bot that is not an administrator of the channel any more. Retrying them forever
-    // would wedge the queue behind one bad row.
-    const retriable = failure.error_code !== 400 && failure.error_code !== 403;
+    // would wedge the queue behind one bad row. A refused button URL is the exception: every post
+    // carries the same site address, so that is the configuration, not the row, and dropping the
+    // row would throw away the whole queue for a value somebody will fix.
+    const misconfigured = /button url|wrong http url/iu.test(reason);
+    const retriable = misconfigured || (failure.error_code !== 400 && failure.error_code !== 403);
     return { ok: false, retriable, reason };
   }
 }
