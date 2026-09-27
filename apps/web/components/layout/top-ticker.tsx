@@ -5,6 +5,9 @@ import type { ReactNode } from 'react';
 
 import { TokenLogo } from '@/components/stock/stock-coin';
 import { PriceChange } from '@/components/ui/display';
+import { cx } from '@/components/ui/primitives';
+import { publicEnv } from '@/lib/env';
+import { featuredFirst } from '@/lib/featured';
 import { formatUsd } from '@/lib/format';
 import { useMarkets } from '@/lib/queries';
 import type { MarketsResponse } from '@/lib/types';
@@ -15,11 +18,17 @@ import type { MarketsResponse } from '@/lib/types';
  */
 export function TopTicker({ initialMarkets }: { initialMarkets?: MarketsResponse }) {
   const { data, isSuccess } = useMarkets({ limit: 40 }, initialMarkets, { refetchInterval: 30_000 });
-  const markets = data?.markets ?? [];
+  // The platform's own token leads the tape.
+  const markets = featuredFirst(data?.markets ?? [], publicEnv.featuredToken);
   const cells = markets.map((m) => (
-    <Link key={m.token} href={`/token/${m.token}`} className="inline-flex items-center gap-2 px-3 h-8 border-r border-line hover:text-primary transition-fast" title={`${m.name} · paired with ${m.stock.symbol}`}>
+    <Link
+      key={m.token}
+      href={`/token/${m.token}`}
+      className={cx('inline-flex items-center gap-2 px-3 h-8 border-r border-line hover:text-primary transition-fast', m.token.toLowerCase() === publicEnv.featuredToken && 'bg-primary-soft')}
+      title={`${m.name} · paired with ${m.stock.symbol}`}
+    >
       <TokenLogo src={m.imageUrl} symbol={m.symbol} size={16} className="rounded-[3px]" />
-      <span className="font-medium">{m.symbol}</span>
+      <span className={cx('font-medium', m.token.toLowerCase() === publicEnv.featuredToken && 'text-primary')}>{m.symbol}</span>
       <span className="text-ink-muted normal-case tracking-normal">/{m.stock.symbol}</span>
       <span className="num">{formatUsd(m.priceUsd)}</span>
       <PriceChange value={m.change24hPercent} digits={1} />

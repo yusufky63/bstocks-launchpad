@@ -6,22 +6,42 @@ import { useMemo } from 'react';
 
 import { MarketDetailRow } from '@/components/markets/market-rows';
 import { TokenLogo } from '@/components/stock/stock-coin';
+import { DexPaid } from '@/components/token/dex-paid';
 import { AnimatedNumber, PriceChange } from '@/components/ui/display';
-import { LinkButton, Module, ModuleHeader } from '@/components/ui/primitives';
+import { LinkButton, Module, ModuleHeader, cx } from '@/components/ui/primitives';
+import { publicEnv } from '@/lib/env';
+import { pickFeatured, withoutFeatured } from '@/lib/featured';
 import { formatNumber, formatUsd } from '@/lib/format';
 import { useMarkets, useStats } from '@/lib/queries';
 import type { MarketView, MarketsResponse, StatsResponse } from '@/lib/types';
 
-export function HomeView({ initialMarkets, initialStats }: { initialMarkets?: MarketsResponse; initialStats?: StatsResponse }) {
+export function HomeView({
+  initialMarkets,
+  initialStats,
+  initialFeatured,
+}: {
+  initialMarkets?: MarketsResponse;
+  initialStats?: StatsResponse;
+  initialFeatured?: MarketView | null;
+}) {
   // Home opts out of the fast poll: the lists should stay still, not reshuffle under the reader.
   const { data: markets, isSuccess: marketsRead } = useMarkets({}, initialMarkets, { refetchInterval: 60_000 });
   const { data: stats } = useStats(initialStats);
   const rows = useMemo(() => markets?.markets ?? [], [markets]);
   const newest = rows.slice(0, 8);
+  const featured = pickFeatured(rows, publicEnv.featuredToken, initialFeatured);
   // Ranked by the query rather than by sorting the page we happen to hold: past a hundred tokens a
-  // real mover would otherwise never reach this panel, however much it traded.
-  const { data: ranked } = useMarkets({ limit: 5, orderBy: 'volume24h' }, undefined, { refetchInterval: 60_000 });
-  const top = useMemo(() => ranked?.markets ?? [...rows].sort((a, b) => (b.volume24hUsd ?? 0) - (a.volume24hUsd ?? 0) || (b.fdvUsd ?? 0) - (a.fdvUsd ?? 0)).slice(0, 5), [ranked, rows]);
+  // real mover would otherwise never reach this panel, however much it traded. One extra row, since
+  // the featured token has its own card above the list.
+  const { data: ranked } = useMarkets({ limit: 6, orderBy: 'volume24h' }, undefined, { refetchInterval: 60_000 });
+  const top = useMemo(
+    () =>
+      withoutFeatured(
+        ranked?.markets ?? [...rows].sort((a, b) => (b.volume24hUsd ?? 0) - (a.volume24hUsd ?? 0) || (b.fdvUsd ?? 0) - (a.fdvUsd ?? 0)),
+        publicEnv.featuredToken,
+      ).slice(0, 5),
+    [ranked, rows],
+  );
   const movers = useMemo(
     () =>
       rows
@@ -56,6 +76,8 @@ export function HomeView({ initialMarkets, initialStats }: { initialMarkets?: Ma
                 How it works
               </LinkButton>
             </div>
+            {/* On a phone the right-hand column falls below the fold; the card comes up here instead. */}
+            {featured && <FeaturedToken market={featured} className="mt-7 lg:hidden" />}
             <dl className="mt-7 grid grid-cols-2 sm:grid-cols-4 gap-px bg-line border border-line rounded-[8px] overflow-hidden max-w-[640px]">
               {[
                 // The front door states the scale reached so far; "Top movers" below carries the day.
@@ -72,7 +94,10 @@ export function HomeView({ initialMarkets, initialStats }: { initialMarkets?: Ma
               ))}
             </dl>
           </div>
-          <TopTokens tokens={top} />
+          <div className="flex flex-col gap-4 min-w-0">
+            {featured && <FeaturedToken market={featured} className="hidden lg:block" />}
+            <TopTokens tokens={top} />
+          </div>
         </div>
       </section>
 
@@ -145,6 +170,41 @@ const HOW_IT_WORKS = [
   { icon: Percent, title: 'Fees in the stock', body: 'Every buy and sell pays 1% in the stock. The hook keeps it as claims: 70% for the creator, 30% for the platform.' },
   { icon: Wallet, title: 'Claim any time', body: 'Creators claim their NVDAc, TSLAc or other stock from their wallet page. No lockups, no auth, no middleman.' },
 ];
+
+/** The platform's own token, pinned above the ranking so it is the first thing a visitor can buy. */
+function FeaturedToken({ market, className }: { market: MarketView; className?: string }) {
+  return (
+    <div className={cx('border border-primary/40 rounded-[8px] bg-primary-soft overflow-hidden', className)}>
+      <div className="px-4 py-2.5 border-b border-primary/20 flex items-center justify-between gap-2">
+        <span className="eyebrow text-primary">Featured · BStocks token</span>
+        <DexPaid token={market.token} />
+      </div>
+      <Link href={`/token/${market.token}`} className="flex items-center gap-3 px-4 pt-4 pb-3 hover:opacity-90 transition-fast">
+        <TokenLogo src={market.imageUrl} symbol={market.symbol} size={44} />
+        <span className="min-w-0 flex-1">
+          <span className="block font-medium text-[16px] leading-tight truncate">{market.name}</span>
+          <span className="block font-mono text-[11px] text-ink-muted truncate">
+            {market.symbol}/{market.stock.symbol} · {formatUsd(market.fdvUsd, { compact: true })} FDV · {formatNumber(market.holders, 0)} holders
+          </span>
+        </span>
+        <span className="text-right shrink-0">
+          <span className="block display num text-[18px]">
+            <AnimatedNumber value={market.priceUsd} format={(v) => formatUsd(v)} />
+          </span>
+          <PriceChange value={market.change24hPercent} className="text-[11px]" />
+        </span>
+      </Link>
+      <div className="px-4 pb-4 grid grid-cols-2 gap-2">
+        <LinkButton href={`/token/${market.token}?trade=buy`} variant="primary" full>
+          Buy {market.symbol}
+        </LinkButton>
+        <LinkButton href={`/token/${market.token}`} full>
+          View token
+        </LinkButton>
+      </div>
+    </div>
+  );
+}
 
 /** The hero visual: the busiest tokens right now, ranked by 24h volume. */
 function TopTokens({ tokens }: { tokens: MarketView[] }) {

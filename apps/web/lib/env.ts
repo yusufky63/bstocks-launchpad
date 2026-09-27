@@ -32,6 +32,8 @@ export const publicEnv = {
   builderCode: process.env.NEXT_PUBLIC_BASE_BUILDER_CODE || 'bc_71vd6x2w',
   /** The alerts channel. Empty until one exists, which is what hides the links to it. */
   telegramChannel: process.env.NEXT_PUBLIC_TELEGRAM_CHANNEL?.trim() ?? '',
+  /** The platform's own token, STOCK: pinned on the home page and first in the ticker. */
+  featuredToken: (process.env.NEXT_PUBLIC_FEATURED_TOKEN?.trim() || '0xb20000000000000000000023b657130129ad33e5').toLowerCase(),
 } as const;
 
 export function requireDeployment(): StockPairDeployment {
