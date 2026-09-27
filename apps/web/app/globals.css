@@ -274,7 +274,8 @@ input[inputmode="decimal"] {
   transition: transform var(--dur-base) var(--ease);
 }
 .rail:hover::before,
-.rail:focus-visible::before {
+.rail:focus-visible::before,
+.rail-on::before {
   transform: scaleY(1);
 }
 

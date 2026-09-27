@@ -1,12 +1,11 @@
 'use client';
 
-import { ArrowRight, Coins, Eye, Lock, Percent, Search, Wallet } from 'lucide-react';
+import { ArrowRight, Coins, Eye, Lock, Percent, Pin, Search, Wallet } from 'lucide-react';
 import Link from 'next/link';
 import { useMemo } from 'react';
 
 import { MarketDetailRow } from '@/components/markets/market-rows';
 import { TokenLogo } from '@/components/stock/stock-coin';
-import { DexPaid } from '@/components/token/dex-paid';
 import { AnimatedNumber, PriceChange } from '@/components/ui/display';
 import { LinkButton, Module, ModuleHeader, cx } from '@/components/ui/primitives';
 import { publicEnv } from '@/lib/env';
@@ -76,8 +75,8 @@ export function HomeView({
                 How it works
               </LinkButton>
             </div>
-            {/* On a phone the right-hand column falls below the fold; the card comes up here instead. */}
-            {featured && <FeaturedToken market={featured} className="mt-7 lg:hidden" />}
+            {/* On a phone the right-hand column falls below the fold; the pinned row comes up here instead. */}
+            {featured && <FeaturedRow market={featured} className="mt-6 lg:hidden border border-line rounded-[8px] overflow-hidden" />}
             <dl className="mt-7 grid grid-cols-2 sm:grid-cols-4 gap-px bg-line border border-line rounded-[8px] overflow-hidden max-w-[640px]">
               {[
                 // The front door states the scale reached so far; "Top movers" below carries the day.
@@ -94,10 +93,7 @@ export function HomeView({
               ))}
             </dl>
           </div>
-          <div className="flex flex-col gap-4 min-w-0">
-            {featured && <FeaturedToken market={featured} className="hidden lg:block" />}
-            <TopTokens tokens={top} />
-          </div>
+          <TopTokens tokens={top} featured={featured} />
         </div>
       </section>
 
@@ -171,43 +167,35 @@ const HOW_IT_WORKS = [
   { icon: Wallet, title: 'Claim any time', body: 'Creators claim their NVDAc, TSLAc or other stock from their wallet page. No lockups, no auth, no middleman.' },
 ];
 
-/** The platform's own token, pinned above the ranking so it is the first thing a visitor can buy. */
-function FeaturedToken({ market, className }: { market: MarketView; className?: string }) {
+/** The platform's own token, pinned: the same row as the ranking, held in place and marked. */
+function FeaturedRow({ market, className }: { market: MarketView; className?: string }) {
   return (
-    <div className={cx('border border-primary/40 rounded-[8px] bg-primary-soft overflow-hidden', className)}>
-      <div className="px-4 py-2.5 border-b border-primary/20 flex items-center justify-between gap-2">
-        <span className="eyebrow text-primary">Featured · BStocks token</span>
-        <DexPaid token={market.token} />
-      </div>
-      <Link href={`/token/${market.token}`} className="flex items-center gap-3 px-4 pt-4 pb-3 hover:opacity-90 transition-fast">
-        <TokenLogo src={market.imageUrl} symbol={market.symbol} size={44} />
-        <span className="min-w-0 flex-1">
-          <span className="block font-medium text-[16px] leading-tight truncate">{market.name}</span>
+    <Link
+      href={`/token/${market.token}`}
+      className={cx('rail rail-on grid grid-cols-[20px_minmax(0,1fr)_auto] items-center gap-3 px-4 py-3 bg-primary-soft/50 hover:bg-primary-soft transition-fast', className)}
+    >
+      <Pin size={12} strokeWidth={2} className="text-primary" aria-label="Pinned" />
+      <span className="flex items-center gap-2.5 min-w-0">
+        <TokenLogo src={market.imageUrl} symbol={market.symbol} size={30} />
+        <span className="min-w-0">
+          <span className="block font-medium text-[14px] leading-tight truncate">{market.name}</span>
           <span className="block font-mono text-[11px] text-ink-muted truncate">
-            {market.symbol}/{market.stock.symbol} · {formatUsd(market.fdvUsd, { compact: true })} FDV · {formatNumber(market.holders, 0)} holders
+            <span className="text-primary">BStocks token</span> · {market.symbol}/{market.stock.symbol} · {formatUsd(market.fdvUsd, { compact: true })} FDV · {formatNumber(market.holders, 0)} holders
           </span>
         </span>
-        <span className="text-right shrink-0">
-          <span className="block display num text-[18px]">
-            <AnimatedNumber value={market.priceUsd} format={(v) => formatUsd(v)} />
-          </span>
-          <PriceChange value={market.change24hPercent} className="text-[11px]" />
+      </span>
+      <span className="text-right">
+        <span className="block display num text-[15px]">
+          <AnimatedNumber value={market.priceUsd} format={(v) => formatUsd(v)} />
         </span>
-      </Link>
-      <div className="px-4 pb-4 grid grid-cols-2 gap-2">
-        <LinkButton href={`/token/${market.token}?trade=buy`} variant="primary" full>
-          Buy {market.symbol}
-        </LinkButton>
-        <LinkButton href={`/token/${market.token}`} full>
-          View token
-        </LinkButton>
-      </div>
-    </div>
+        <PriceChange value={market.change24hPercent} className="text-[11px]" />
+      </span>
+    </Link>
   );
 }
 
 /** The hero visual: the busiest tokens right now, ranked by 24h volume. */
-function TopTokens({ tokens }: { tokens: MarketView[] }) {
+function TopTokens({ tokens, featured }: { tokens: MarketView[]; featured: MarketView | null }) {
   return (
     <div className="border border-line rounded-[8px] bg-canvas overflow-hidden">
       <div className="px-4 py-2.5 border-b border-line flex items-center justify-between">
@@ -216,7 +204,8 @@ function TopTokens({ tokens }: { tokens: MarketView[] }) {
           All →
         </Link>
       </div>
-      {tokens.length === 0 && (
+      {featured && <FeaturedRow market={featured} className="border-b border-line" />}
+      {tokens.length === 0 && !featured && (
         <p className="px-4 py-8 text-[13px] text-ink-secondary">
           The first tokens will show up here.{' '}
           <Link href="/create" className="text-primary font-medium">
