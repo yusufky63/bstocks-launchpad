@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { stockPairFactoryAbi, stockPairHookAbi, stockPairRouterAbi } from '@stockpair/core';
@@ -7,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 
 import { baseBlockDate, deploymentLabel, ERRORS, EVENTS, FUNCTIONS, type RefItem, type RefSource, THRESHOLDS, ZERO_ADMIN } from '@/app/docs/reference';
 import { TX_DEADLINE_SECONDS } from '@/lib/deadline';
+import { EMBED_SECTIONS, embedPath } from '@/lib/embed';
 import {
   DEV_BUY_BLOCK_BPS,
   DEV_BUY_CONFIRM_BPS,
@@ -205,5 +207,57 @@ describe('public copy', () => {
 
   it('names no deployment by version', () => {
     for (const [name, text] of Object.entries(pages)) expect(text, name).not.toMatch(/\bv[12]\b|\bV[12]\b/u);
+  });
+});
+
+describe('docs cover what the app serves', () => {
+  const docs = read('../app/docs/page.tsx').replace(/\s+/gu, ' ');
+  const howItWorks = read('../app/how-it-works/page.tsx');
+  const readme = read('../../../README.md').replace(/\s+/gu, ' ');
+
+  /** Every route.ts under app/api, as the docs write it: `/api/tokens/:address/swaps`. */
+  function apiRoutes(dir = fileURLToPath(new URL('../app/api', import.meta.url)), prefix = '/api'): string[] {
+    return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      if (entry.isFile()) return entry.name === 'route.ts' ? [prefix] : [];
+      const segment = entry.name.replace(/^\[(.+)\]$/u, ':$1');
+      return apiRoutes(join(dir, entry.name), `${prefix}/${segment}`);
+    });
+  }
+
+  it('documents every API route', () => {
+    const routes = apiRoutes();
+    expect(routes.length).toBeGreaterThan(15);
+    for (const route of routes) expect(docs, route).toMatch(new RegExp(`(?:GET|POST|GET\|POST) ${route.replaceAll('/', '\/')}(?:[" ?]|$)`, 'u'));
+  });
+
+  it('names every option a widget reads, and every section a host may hide', () => {
+    const keys = new Set<string>();
+    for (const path of [
+      embedPath({ widget: 'trade', token: `0x${'1'.repeat(40)}`, side: 'sell', theme: 'dark', eligibility: 'always', accent: '#123456', hide: ['header'] }),
+      embedPath({ widget: 'create', stock: `0x${'2'.repeat(40)}`, theme: 'light', eligibility: 'always', accent: '#654321', hide: ['buy'] }),
+    ]) {
+      for (const key of new URLSearchParams(path.split('?')[1]).keys()) keys.add(key);
+    }
+    expect([...keys].sort()).toEqual(['accent', 'eligibility', 'hide', 'side', 'stock', 'theme']);
+    for (const key of keys) expect(docs, key).toContain(`<KeyValue k="${key}"`);
+    const hideRow = docs.slice(docs.indexOf('<KeyValue k="hide"'));
+    expect(hideRow).toContain(`trade: ${EMBED_SECTIONS.trade.join(', ')}`);
+    expect(hideRow).toContain(`create: ${EMBED_SECTIONS.create.join(', ')}`);
+  });
+
+  it('states the frame policy next.config sends', () => {
+    const config = read('../next.config.ts');
+    expect(config).toContain("{ key: 'Content-Security-Policy', value: 'frame-ancestors *' }");
+    expect(config).toContain("{ key: 'X-Frame-Options', value: 'DENY' }");
+    expect(docs).toContain('<code>Content-Security-Policy: frame-ancestors *</code>');
+    expect(docs).toContain('<code>X-Frame-Options: DENY</code>');
+    expect(readme).toContain('`X-Frame-Options: DENY`');
+  });
+
+  it('points readers of the plain-words page and the README at the widgets', () => {
+    expect(howItWorks).toContain('href="/widgets"');
+    expect(howItWorks).toContain('Can I put trading or launching on my own site?');
+    expect(readme).toContain('`/embed/trade/:token` and `/embed/create`');
+    expect(readme).toContain('`GET /api/launch-config`');
   });
 });

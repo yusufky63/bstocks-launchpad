@@ -52,6 +52,8 @@ const FAQ = [
   ['Can the creator pull liquidity or mint more?', 'No. No token launched here has an admin, and the factory has no withdraw function. Both are enforced by the contracts, not by policy.'],
   ['Can the creator change the token after launch?', 'Only the profile: image, description and links. Name, symbol, supply, the pool and the fee split are onchain and never change. The creator picks one of two kinds of profile at launch. Fixed, the default: the onchain record never changes, and the creator can still update what this site shows by signing a message with their wallet (a message, not a transaction); the page says it was updated by the creator, with the time. Editable, on the newest launch factory only: only the creator\'s wallet can point the token at a new IPFS profile, onchain, and the page shows how often and when it changed. The creator can lock an editable profile at any time, and after that nobody can point the token at a different profile again. The page says so if part of the profile is served from an address whose content can still change.'],
   ['What is a "dev" trade?', 'A swap made by the wallet that created the token. They are marked on the chart and in the trades list so buyers can see when a creator is buying or selling.'],
+  ['Can I put trading or launching on my own site?', 'Yes. The Widgets page gives you one iframe that trades any token here and one that is the create form, with a live preview and your own colours. Visitors connect their own wallet inside the widget and sign there; your site never holds their funds, keys or approvals. A token launched in the create widget belongs to the visitor who launched it, with the creator\'s 70% of fees, exactly as if they had used this site. Fees are the same, and the host site gets no share of them.'],
+  ['I am connecting from the United States. Can I still use it?', 'Every token here trades against a Coinbase tokenized stock, and those are offered only to eligible persons outside the United States. A connection from the US is asked to confirm that the person does not live in the United States and is not a US citizen or resident; after that they create and trade like anyone else. The answer stays on that device for 30 days and nothing about the person is recorded. Browsing is open to everyone either way.'],
   ['Will the Telegram channel post my token?', 'Launches all get posted. After that a trade is announced when it clears $500, or when it is a meaningful share of that token’s own day and still worth a reader’s attention — not every buy and not every sell, because one busy token posting every trade would bury every other one. There is nothing to configure and no account; the channel is the same feed for everybody.'],
 ];
 
@@ -98,6 +100,7 @@ export default function HowItWorksPage() {
             <KeyValue k="Buy at launch" v="optional · same 1% fee · newest factory" />
             <KeyValue k="Profile" v="fixed, or editable until locked (newest factory)" />
             <KeyValue k="Creation fee" v="0.0001 ETH" />
+            <KeyValue k="Widgets" v="trade · create · any site" />
             <KeyValue k="Network" v="Base · chain 8453" />
             {d && <KeyValue k="Factory" v={<a href={`https://basescan.org/address/${d.factory}`} target="_blank" rel="noreferrer" className="text-primary">{d.factory.slice(0, 10)}…</a>} />}
           </div>
@@ -110,6 +113,9 @@ export default function HowItWorksPage() {
             </LinkButton>
             <Link href="/stocks" className="text-[13px] text-primary font-medium text-center">
               See the 13 stocks →
+            </Link>
+            <Link href="/widgets" className="text-[13px] text-primary font-medium text-center">
+              Put trading on your own site →
             </Link>
           </div>
         </Module>

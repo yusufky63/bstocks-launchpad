@@ -1,10 +1,12 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import type { ReactNode } from 'react';
 
 import { BASE_CONTRACTS, BASE_STOCKS } from '@stockpair/core';
 
 import { AddressLabel } from '@/components/ui/display';
 import { Badge, KeyValue, LinkButton, Module, ModuleHeader, PageTitle } from '@/components/ui/primitives';
+import { EMBED_HEIGHT, EMBED_MESSAGE_SOURCE } from '@/lib/embed';
 import { publicEnv } from '@/lib/env';
 
 import { deploymentLabel, ERRORS, EVENTS, FUNCTIONS, THRESHOLDS, ZERO_ADMIN, type RefItem } from './reference';
@@ -23,6 +25,8 @@ const TOC = [
   ['indexer', 'Indexer'],
   ['profiles', 'Token profiles'],
   ['api', 'API'],
+  ['widgets', 'Widgets'],
+  ['eligibility', 'Eligibility'],
   ['alerts', 'Alerts'],
   ['stocks', 'Quote stocks'],
   ['thresholds', 'Thresholds'],
@@ -75,7 +79,7 @@ export default function DocsPage() {
   const deployments = [...publicEnv.deployments].reverse();
   return (
     <div className="flex flex-col gap-6">
-      <PageTitle index="08 — Docs" title="Technical reference" lead="Contracts, math, indexer, API and the security model of the launchpad. Everything below is enforced by code that is deployed on Base; nothing depends on a server behaving well." action={<LinkButton href="/how-it-works">Plain-words version</LinkButton>} />
+      <PageTitle index="08 — Docs" title="Technical reference" lead="Contracts, math, indexer, API, widgets and the security model of the launchpad. Everything below is enforced by code that is deployed on Base; nothing depends on a server behaving well." action={<LinkButton href="/how-it-works">Plain-words version</LinkButton>} />
 
       <div className="grid grid-cols-1 lg:grid-cols-[220px_minmax(0,1fr)] gap-5 items-start">
         <nav aria-label="Docs sections" className="lg:sticky lg:top-[72px] border border-line rounded-[8px] bg-canvas p-2 flex flex-wrap lg:flex-col gap-0.5">
@@ -90,7 +94,7 @@ export default function DocsPage() {
         <div className="flex flex-col gap-5 min-w-0">
           <Section id="architecture">
             <p>
-              The launchpad has four parts. <strong>Contracts</strong> on Base (a factory, a Uniswap v4 hook and a small router) hold every rule that matters: supply, liquidity, fees and who may claim them. An <strong>indexer</strong> follows Base, waits for confirmations and stores confirmed launches, swaps, transfers, profile changes and fee events. The <strong>web app</strong> renders pages and a public JSON API from those rows; for new launches it also reads the factory directly so trading works while indexing catches up. A shared <strong>core</strong> library holds the stock registry, the price math, the launch quote and the event decoders used by all of them.
+              The launchpad has four parts. <strong>Contracts</strong> on Base (a factory, a Uniswap v4 hook and a small router) hold every rule that matters: supply, liquidity, fees and who may claim them. An <strong>indexer</strong> follows Base, waits for confirmations and stores confirmed launches, swaps, transfers, profile changes and fee events. The <strong>web app</strong> renders pages, widgets other sites can frame and a public JSON API from those rows; for new launches it also reads the factory directly so trading works while indexing catches up. A shared <strong>core</strong> library holds the stock registry, the price math, the launch quote and the event decoders used by all of them.
             </p>
             <p>
               Everything on a page is a confirmed event, a number derived from confirmed events, or a live <code>eth_call</code> — with one exception, and it is signed: the creator of a token with a fixed profile may replace its presentation fields, and the server stores that only after checking the signature against the creator address recorded onchain. Nothing else the web app receives from a client is ever stored.
@@ -273,13 +277,52 @@ export default function DocsPage() {
             <KeyValue k="POST /api/quote" v="{ token, side, amountIn } · exact-in quote from the v4 Quoter, including confirmed launches awaiting indexing" mono={false} />
             <KeyValue k="POST /api/metadata" v="multipart · pins image and ERC-7572 JSON to IPFS · with token, the name and symbol come from the launch record" mono={false} />
             <KeyValue k="GET /api/health" v="database, schema version, contracts, launch hooks no configured deployment covers, indexer lag, chain head · ok is false while the schema is behind this build or a launch hook is not configured" mono={false} />
+            <KeyValue k="GET /api/launch-config" v="what a site needs to run a launch in its own UI: chain id, the newest factory, hook and router with their deploy block, the builder code, the deadline, the form limits and this site's page URLs · the creation fee and opening valuation are left out on purpose: read them from the factory right before the wallet opens" mono={false} />
             <KeyValue k="GET /api/region" v="the caller's country, the mode, and whether quotes and pins are refused until the caller confirms eligibility" mono={false} />
-            <KeyValue k="POST /api/region" v="{ confirm } · the caller's own statement that they are not a US person, kept as a cookie for 30 days" mono={false} />
+            <KeyValue k="POST /api/region" v="{ confirm } · the caller's own statement that they are not a US person, kept as a cookie for 30 days · refused from any other site's page" mono={false} />
             <KeyValue
               k="x-bstocks-eligibility: confirmed"
               v="request header · the same statement for a site that asks it in its own UI: sent on /api/quote, /api/metadata and /api/region, it counts as the cookie does. Send it only after the visitor ticked your own 'not a US person' box"
               mono={false}
             />
+            <p className="pt-2">
+              <strong>Partner access.</strong> Browsers on listed partner origins (zkCodex and its preview deployments; <code>PARTNER_ORIGINS</code> replaces the list) may read <code>/api/launch-config</code>, <code>/api/stocks</code>, <code>/api/markets</code>, <code>/api/region</code> and <code>/api/health</code>, and post to <code>/api/metadata</code>. The calls come from the visitor&apos;s own browser, never a partner server, so the pin limit and the eligibility rule apply to each visitor rather than to the partner as a whole. Quotes, wallets, token detail and activity stay closed to other origins until those routes have limits of their own. A partner&apos;s launch still goes from the visitor&apos;s wallet straight to the factory, so the visitor is the creator. Any site can use the <a href="#widgets" className="text-primary">widgets</a> instead, which need no listing.
+            </p>
+          </Section>
+
+          <Section id="widgets">
+            <p>
+              Two pages exist to be framed by other sites: <code>/embed/trade/:token</code>, the buy / sell panel of one token, and <code>/embed/create</code>, the create form. <Link href="/widgets" className="text-primary">Widgets</Link> builds the iframe code with a live preview. The widget pages answer <code>Content-Security-Policy: frame-ancestors *</code>; every other page answers <code>X-Frame-Options: DENY</code>.
+            </p>
+            <p>
+              A widget is this site running inside the frame: the same quote endpoint, slippage and impact limits, review step, eligibility rule and contracts. The visitor connects their own wallet in the frame and signs there; the host page never sees a key, an approval, a balance or an address. A launch from the create widget comes from the visitor&apos;s wallet, so the visitor is the creator and earns the creator&apos;s 70%; the host earns no share of the fees. The trade widget follows a new launch from submitted to indexed without reloading, and the create widget moves to the new token&apos;s trade widget once the wallet returns a hash. A link to any other page of the site opens in a new tab.
+            </p>
+            <KeyValue k="side" v="trade · sell opens on Sell · default Buy" mono={false} />
+            <KeyValue k="stock" v="create · the address of the stock the form opens with" mono={false} />
+            <KeyValue k="theme" v="light or dark · default follows the visitor's own setting" mono={false} />
+            <KeyValue k="eligibility" v="always asks every visitor the eligibility question before their first trade or launch · default asks only where the server requires it" mono={false} />
+            <KeyValue k="accent" v="a six-digit hex colour for the primary blue · the pressed shade, tint and button text are derived for each theme" mono={false} />
+            <KeyValue k="hide" v="a comma list · trade: header, presets, notes · create: header, links, buy, profile, steps · a hidden choice keeps its safe default: no buy at launch, a fixed profile" mono={false} />
+            <p className="pt-2">
+              The price, fee, minimum received, review step, eligibility question and the &quot;powered by&quot; line cannot be hidden. The default frame is {EMBED_HEIGHT.trade}px tall for trade and {EMBED_HEIGHT.create}px for create, which scrolls inside the frame; the optional script on the Widgets page grows the frame to the widget.
+            </p>
+            <p>
+              <strong>Events.</strong> The widget posts to its host with <code>source: &apos;{EMBED_MESSAGE_SOURCE}&apos;</code>: <code>ready</code> with the widget, <code>resize</code> with its height, <code>swap</code> with the token, side and transaction hash, and <code>launch</code> with the token and transaction hash. Check <code>event.origin</code>. Any page can post a message that looks like these, so treat swap and launch as a hint to refresh, and look the transaction up on Base before rewarding anyone for it.
+            </p>
+          </Section>
+
+          <Section id="eligibility">
+            <p>
+              Every pool here is quoted in a Coinbase tokenized stock, and the issuer offers those only to eligible persons outside the United States. The site asks rather than guesses: an IP address says where a connection comes from, not who is behind it.
+            </p>
+            <KeyValue k="Who is asked" v="connections from a country in GEOBLOCK_COUNTRIES · US by default · * asks every country" mono={false} />
+            <KeyValue k="The question" v="the visitor confirms they do not live in the United States and are not a US citizen or resident" mono={false} />
+            <KeyValue k="Kept" v="30 days on that device, as a cookie and in the browser · nothing about the person is recorded" mono={false} />
+            <KeyValue k="What it gates" v="POST /api/quote and POST /api/metadata answer 451 until the visitor confirms" mono={false} />
+            <KeyValue k="GEOBLOCK_MODE=block" v="refuses those routes from a listed country whatever the visitor says" mono={false} />
+            <p className="pt-2">
+              The trade panel and the create form ask right above their button; the site also asks once on arrival, and a widget asks at the button only, where a dialog could land outside the host page&apos;s view. A widget in another site&apos;s frame may be refused the cookie (Safari refuses it by default), so the browser also sends the answer as the <code>x-bstocks-eligibility</code> header. Reading stays open to everyone. The swap itself is a call from the visitor&apos;s own wallet to the contracts, which no server can stop; this rule covers only the routes this site controls.
+            </p>
           </Section>
 
           <Section id="alerts">
@@ -369,6 +412,8 @@ export default function DocsPage() {
               <li><strong>Confirmed data only.</strong> The indexer records blocks three confirmations deep and rolls back on reorgs. The single row the web app writes on a client&apos;s behalf is a creator&apos;s signed profile, and it is written only after the signature verifies against the launch creator.</li>
               <li><strong>Profiles are signed, not trusted.</strong> Off-chain profile edits, for fixed-profile tokens only, require an EIP-712 signature from the launch creator over the exact fields and image hash, with a 15-minute validity window and monotonic timestamps against replay. Onchain edits of an editable profile come only from the creator&apos;s own transaction.</li>
               <li><strong>Input validation.</strong> Every API parameter is schema-checked; addresses are checksummed and lower-cased; metadata uploads are limited to 2 MB images of four types and 1,000-character descriptions; X and Telegram links are normalised to <code>https://x.com/handle</code> and <code>https://t.me/handle</code>.</li>
+              <li><strong>Framing.</strong> Only the widget pages under <code>/embed</code> may be framed, and by any site; every other page refuses. A widget holds no keys either: each trade or launch still ends in the visitor&apos;s own wallet, which a host page cannot draw over or answer for. Links out of a widget open a new tab rather than loading the site inside the host&apos;s frame.</li>
+              <li><strong>Cross-origin reads and writes.</strong> Other origins get API access only on the listed partner routes, from a visitor&apos;s browser, and never with credentials. The eligibility answer can only be given on this site&apos;s own pages: <code>POST /api/region</code> refuses a request whose <code>Origin</code> is another site.</li>
               <li><strong>Trading safety.</strong> Quotes come from the v4 Quoter; swaps carry a minimum output from the user&apos;s slippage setting and a 10-minute deadline; the swap is simulated before the wallet opens. On the newest hook a swap that does not fill the stock amount it asked for reverts instead of paying a fee on the part that never traded.</li>
             </ul>
           </Section>

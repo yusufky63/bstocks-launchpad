@@ -174,6 +174,21 @@ database round trip per window.
 - `POST /api/metadata` multipart `{ name, symbol, description, website, twitter, telegram, image }` -> `ipfs://`
   contractURI; with `token`, the name and symbol come from that token's launch record
 - `GET /api/health`
+- `GET /api/launch-config` (newest factory, hook and router, builder code, deadline, form limits, page URLs)
+- `GET|POST /api/region` (the caller's country and whether quotes and pins wait for the eligibility answer;
+  POST `{ confirm }` records the answer as a 30-day cookie, same-origin only). `x-bstocks-eligibility: confirmed`
+  carries the same answer as a header
+
+Listed partner origins (`PARTNER_ORIGINS`, zkCodex by default) may call launch-config, stocks, markets, region
+and health, and post metadata, from the visitor's browser. Everything else stays same-origin.
+
+## Widgets
+
+`/embed/trade/:token` and `/embed/create` are the trade panel and the create form as pages any site can put in
+an iframe (`frame-ancestors *`); every other page sends `X-Frame-Options: DENY`. `/widgets` builds the snippet
+with a live preview. Query options: `side`, `stock`, `theme`, `eligibility=always`, `accent=<hex>` and
+`hide=<sections>`. The widget posts `ready`, `resize`, `swap` and `launch` messages to its host with
+`source: 'bstocks-launchpad'`; nothing identifying the visitor leaves the frame. See `/docs#widgets`.
 
 ## Notes
 
