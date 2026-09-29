@@ -9,18 +9,20 @@ import { base } from 'wagmi/chains';
 
 import { stockPairFactoryAbi } from '@stockpair/core';
 
+import { askEligibility } from '@/components/common/eligibility';
 import { TokenLogo } from '@/components/stock/stock-coin';
 import { Input, TextArea } from '@/components/ui/controls';
 import { Banner, TxLink } from '@/components/ui/display';
 import { Button } from '@/components/ui/primitives';
 import { Sheet } from '@/components/ui/sheet';
 import { builderDataSuffix } from '@/lib/attribution';
+import { eligibilityHeaders } from '@/lib/eligibility';
 import { normalizeTelegram } from '@/lib/profile';
 import { qk } from '@/lib/queries';
 import { revertErrorName } from '@/lib/revert';
 import { describeTradeError } from '@/lib/trade';
 import { normalizeTwitter } from '@/lib/twitter';
-import type { MarketView } from '@/lib/types';
+import type { ApiErrorBody, MarketView } from '@/lib/types';
 
 const PROFILE_ERRORS: Record<string, string> = {
   NotCreator: 'Only the wallet that created this token can change its profile.',
@@ -100,9 +102,12 @@ export function OnchainProfile({ market, factory, contentAddressed }: { market: 
       if (draft.twitter !== undefined) form.set('twitter', draft.twitter.trim());
       if (draft.telegram !== undefined) form.set('telegram', draft.telegram.trim());
       if (image) form.set('image', image);
-      const response = await fetch('/api/metadata', { method: 'POST', body: form });
-      const body = (await response.json()) as { contractURI?: string; error?: { message: string } };
-      if (!response.ok || !body.contractURI) throw new Error(body.error?.message ?? 'The profile could not be pinned.');
+      const response = await fetch('/api/metadata', { method: 'POST', body: form, headers: eligibilityHeaders() });
+      const body = (await response.json()) as { contractURI?: string; error?: ApiErrorBody['error'] };
+      if (!response.ok || !body.contractURI) {
+        if (body.error?.code === 'REGION_RESTRICTED') askEligibility();
+        throw new Error(body.error?.message ?? 'The profile could not be pinned.');
+      }
       const hash = await sendFactoryCall({ kind: 'update', uri: body.contractURI });
       setDone({ message: 'Updated. It shows here as soon as the indexer reads it (a few seconds).', hash });
       void qc.invalidateQueries({ queryKey: qk.token(market.token) });

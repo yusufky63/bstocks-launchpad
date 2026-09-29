@@ -6,6 +6,7 @@ import { cookieToInitialState } from 'wagmi';
 
 import { AppShell } from '@/components/layout/app-shell';
 import { Providers } from '@/components/providers';
+import { THEME_SCRIPT } from '@/lib/embed';
 import { publicEnv } from '@/lib/env';
 import { BSTOCKS_X_HANDLE } from '@/lib/twitter';
 import { getWagmiConfig } from '@/lib/wagmi';
@@ -79,8 +80,6 @@ export const viewport: Viewport = {
   ],
 };
 
-const themeScript = `(function(){try{var t=localStorage.getItem('stockpair:theme');if(t==='dark'||t==='light'){document.documentElement.setAttribute('data-theme',t);}}catch(e){}})();`;
-
 export default async function RootLayout({ children }: { children: ReactNode }) {
   const cookieHeader = (await cookies()).toString();
   const initialState = cookieToInitialState(getWagmiConfig(), cookieHeader);
@@ -88,7 +87,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
     <html lang="en" suppressHydrationWarning className={`${body.variable} ${display.variable} ${mono.variable} h-full`}>
       <head>
         <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLd }} />
-        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+        <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
       </head>
       <body className="min-h-full flex flex-col bg-canvas text-ink">
         <Providers initialState={initialState}>

@@ -43,6 +43,7 @@ const FOOTER_LINKS = [
   ['/stats', 'Stats'],
   ['/alerts', 'Alerts'],
   ['/how-it-works', 'How it works'],
+  ['/widgets', 'Widgets'],
   ['/docs', 'Docs'],
 ] as const;
 
@@ -58,6 +59,8 @@ function isActive(path: string, href: string): boolean {
 export function AppShell({ children, initialMarkets }: { children: ReactNode; initialMarkets?: MarketsResponse }) {
   const path = usePathname();
   const { address } = useAccount();
+  // Widgets run inside other sites' frames and bring their own minimal chrome (components/embed).
+  if (path === '/embed' || path.startsWith('/embed/')) return <>{children}</>;
   return (
     <div className="flex min-h-dvh flex-col">
       <div className="sticky top-0 z-30 bg-canvas">

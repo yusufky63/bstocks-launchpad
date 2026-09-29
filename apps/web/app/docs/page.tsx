@@ -273,7 +273,13 @@ export default function DocsPage() {
             <KeyValue k="POST /api/quote" v="{ token, side, amountIn } · exact-in quote from the v4 Quoter, including confirmed launches awaiting indexing" mono={false} />
             <KeyValue k="POST /api/metadata" v="multipart · pins image and ERC-7572 JSON to IPFS · with token, the name and symbol come from the launch record" mono={false} />
             <KeyValue k="GET /api/health" v="database, schema version, contracts, launch hooks no configured deployment covers, indexer lag, chain head · ok is false while the schema is behind this build or a launch hook is not configured" mono={false} />
-            <KeyValue k="GET /api/region" v="whether the caller's country is one this interface refuses" mono={false} />
+            <KeyValue k="GET /api/region" v="the caller's country, the mode, and whether quotes and pins are refused until the caller confirms eligibility" mono={false} />
+            <KeyValue k="POST /api/region" v="{ confirm } · the caller's own statement that they are not a US person, kept as a cookie for 30 days" mono={false} />
+            <KeyValue
+              k="x-bstocks-eligibility: confirmed"
+              v="request header · the same statement for a site that asks it in its own UI: sent on /api/quote, /api/metadata and /api/region, it counts as the cookie does. Send it only after the visitor ticked your own 'not a US person' box"
+              mono={false}
+            />
           </Section>
 
           <Section id="alerts">

@@ -19,8 +19,9 @@ import { devBuyTier } from '@/lib/launch';
 import { qk, useSwaps, useToken } from '@/lib/queries';
 import { useIsDesktop } from '@/lib/settings';
 import { telegramHandle } from '@/lib/profile';
+import { earlyTradeMarket } from '@/lib/trade-market';
 import { twitterHandle } from '@/lib/twitter';
-import type { LaunchInfo, MarketView, TokenResponse, TradeMarket } from '@/lib/types';
+import type { LaunchInfo, MarketView, TokenResponse } from '@/lib/types';
 
 import { ChartModule } from './chart-module';
 import { DexPaid } from './dex-paid';
@@ -83,17 +84,7 @@ export function TokenView({ address, initialData }: { address: string; initialDa
 
   if (view.status === 'indexing') {
     const l = view.launch;
-    const earlyMarket: TradeMarket | null = l.stockDecimals === null ? null : {
-      token: l.token,
-      symbol: l.symbol,
-      factory: l.factory,
-      hook: l.hook,
-      stock: { address: l.stock, symbol: l.stockSymbol ?? 'STOCK', ticker: l.stockTicker ?? '', decimals: l.stockDecimals },
-      stockUsd: Number(l.stockUsd8) / 1e8,
-      priceUsd: null,
-      priceInStock: null,
-      stockFeedStatus: 'unknown',
-    };
+    const earlyMarket = earlyTradeMarket(l);
     const onTraded = () => { void qc.invalidateQueries({ queryKey: qk.token(l.token) }); };
     return (
       <div className="flex flex-col gap-5">

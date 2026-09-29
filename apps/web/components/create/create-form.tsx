@@ -3,17 +3,20 @@
 import { ArrowUpRight, ImagePlus } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useMemo, useState, useSyncExternalStore } from 'react';
-import { erc20Abi, zeroAddress, type Address } from 'viem';
+import { erc20Abi, zeroAddress, type Address, type Hash } from 'viem';
 import { useAccount, useReadContracts } from 'wagmi';
 import { base } from 'wagmi/chains';
 
 import { fdvUsd as fdvUsdOf, formatAmount, openingPriceUsd, parseAmount, stockPairFactoryAbi, stockPerTokenE30, tokenIsCurrency0 } from '@stockpair/core';
 
+import { askEligibility, EligibilityCheck, RegionBlocked, useEligibility } from '@/components/common/eligibility';
+import { useEmbedHidden } from '@/components/embed/embed-sections';
 import { ConnectButton } from '@/components/layout/connect-button';
 import { StockCoin } from '@/components/stock/stock-coin';
 import { Checkbox, Input, Switch, TextArea } from '@/components/ui/controls';
 import { Banner } from '@/components/ui/display';
 import { Button, Chip, KeyValue, Module, ModuleHeader, cx } from '@/components/ui/primitives';
+import { eligibilityHeaders } from '@/lib/eligibility';
 import { publicEnv } from '@/lib/env';
 import { bpsToPct, formatNumber, formatUsd } from '@/lib/format';
 import {
@@ -33,7 +36,7 @@ import {
 import { normalizeTelegram } from '@/lib/profile';
 import { useStocks } from '@/lib/queries';
 import { normalizeTwitter } from '@/lib/twitter';
-import type { StocksResponse } from '@/lib/types';
+import type { ApiErrorBody, StocksResponse } from '@/lib/types';
 
 import { LaunchReviewSheet, type ReviewedLaunch } from './launch-review-sheet';
 
@@ -72,7 +75,20 @@ function parsePrefill(search: string): { name?: string; symbol?: string; stock?:
 
 const pct2 = (ppm: bigint) => `${(Number(ppm) / 10_000).toFixed(2)}%`;
 
-export function CreateForm({ initialStocks }: { initialStocks?: StocksResponse }) {
+/**
+ * `onLaunched` replaces the default of opening the token page, for the create widget: it stays in
+ * its frame and tells the host site. The salt is renewed either way.
+ */
+export function CreateForm({
+  initialStocks,
+  onLaunched,
+  compact = false,
+}: {
+  initialStocks?: StocksResponse;
+  onLaunched?: (launch: { token: Address; txHash: Hash }) => void;
+  /** One column at every width: a widget is as narrow as its frame, whatever the viewport says. */
+  compact?: boolean;
+}) {
   const router = useRouter();
   const { address, isConnected, chainId } = useAccount();
   // New launches go to the newest deployment only; older factories keep their tokens, not new ones.
@@ -121,6 +137,9 @@ export function CreateForm({ initialStocks }: { initialStocks?: StocksResponse }
   const stock = stockState ?? prefillStock;
   const selected = stocks.find((s) => s.address === stock) ?? null;
   const onBase = isConnected && !!address && chainId === base.id;
+  const eligibility = useEligibility();
+  // A widget host may leave parts out; each falls back to its default (off, fixed, empty).
+  const hidden = useEmbedHidden();
 
   const liveQuery = { refetchInterval: 15_000, refetchOnWindowFocus: true } as const;
   const factoryReads = useReadContracts({
@@ -224,9 +243,12 @@ export function CreateForm({ initialStocks }: { initialStocks?: StocksResponse }
     form.set('twitter', twitter.trim());
     form.set('telegram', telegram.trim());
     if (image) form.set('image', image);
-    const response = await fetch('/api/metadata', { method: 'POST', body: form });
-    const pinned = (await response.json()) as { contractURI: string } | { error: { message: string } };
-    if (!response.ok || 'error' in pinned) throw new Error('error' in pinned ? pinned.error.message : 'Metadata could not be pinned.');
+    const response = await fetch('/api/metadata', { method: 'POST', body: form, headers: eligibilityHeaders() });
+    const pinned = (await response.json()) as { contractURI: string } | ApiErrorBody;
+    if (!response.ok || 'error' in pinned) {
+      if ('error' in pinned && pinned.error.code === 'REGION_RESTRICTED') askEligibility();
+      throw new Error('error' in pinned ? pinned.error.message : 'Metadata could not be pinned.');
+    }
     return pinned.contractURI;
   };
 
@@ -289,17 +311,18 @@ export function CreateForm({ initialStocks }: { initialStocks?: StocksResponse }
     const next = validate();
     setErrors(next);
     if (Object.keys(next).length > 0) return;
+    if (eligibility.needsCheck || eligibility.blocked) return;
     void openReview();
   }
 
   const openingTokensPerStock = selected && selected.priceUsd !== null ? (selected.priceUsd * 1e9) / fdvUsd : null;
   const blocked = buyActive && tier === 'blocked';
   const needsAck = buyActive && tier === 'confirm' && !shareAck;
-  const ctaDisabled = !deployment || insufficient || blocked || needsAck || pausedNow !== null;
+  const ctaDisabled = !deployment || insufficient || blocked || needsAck || pausedNow !== null || eligibility.needsCheck || eligibility.blocked;
   const ctaLabel = insufficient ? `Not enough ${stockSymbol}` : buyActive ? 'Review launch and buy' : 'Review launch';
 
   return (
-    <form className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_380px] gap-5 items-start" onSubmit={submit}>
+    <form className={cx('grid grid-cols-1 gap-5 items-start', !compact && 'lg:grid-cols-[minmax(0,1fr)_380px]')} onSubmit={submit}>
       <div className="flex flex-col gap-5 min-w-0">
         <Module ticks>
           <ModuleHeader index="01" title="Token" />
@@ -309,11 +332,15 @@ export function CreateForm({ initialStocks }: { initialStocks?: StocksResponse }
               <Input label="Symbol" maxLength={16} value={symbol} onChange={(e) => setSymbol(e.target.value.toUpperCase().replace(/[^A-Z0-9]/gu, ''))} placeholder="NDOG" error={errors.symbol} autoComplete="off" autoCapitalize="characters" />
             </div>
             <TextArea label="Description" maxLength={1_000} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What is this token about?" hint={`${description.length}/1000 · stored in the token's ERC-7572 metadata`} error={errors.description} />
-            <Input label="Website (optional)" type="url" value={website} onChange={(e) => setWebsite(e.target.value)} placeholder="https://" error={errors.website} autoComplete="off" />
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <Input label="X (optional)" value={twitter} onChange={(e) => setTwitter(e.target.value)} placeholder="@handle or x.com/handle" error={errors.twitter} autoComplete="off" autoCapitalize="none" spellCheck={false} />
-              <Input label="Telegram (optional)" value={telegram} onChange={(e) => setTelegram(e.target.value)} placeholder="@group or t.me/group" error={errors.telegram} autoComplete="off" autoCapitalize="none" spellCheck={false} />
-            </div>
+            {!hidden('links') && (
+              <>
+                <Input label="Website (optional)" type="url" value={website} onChange={(e) => setWebsite(e.target.value)} placeholder="https://" error={errors.website} autoComplete="off" />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <Input label="X (optional)" value={twitter} onChange={(e) => setTwitter(e.target.value)} placeholder="@handle or x.com/handle" error={errors.twitter} autoComplete="off" autoCapitalize="none" spellCheck={false} />
+                  <Input label="Telegram (optional)" value={telegram} onChange={(e) => setTelegram(e.target.value)} placeholder="@group or t.me/group" error={errors.telegram} autoComplete="off" autoCapitalize="none" spellCheck={false} />
+                </div>
+              </>
+            )}
             <div>
               <span className="block mb-1.5 text-[12px] font-mono uppercase tracking-[0.08em] text-ink-muted">Image (optional)</span>
               <label className={cx('flex items-center gap-4 rounded-[6px] border border-dashed px-4 py-3 cursor-pointer transition-fast hover:border-line-strong', errors.image ? 'border-danger' : 'border-line-strong')}>
@@ -379,7 +406,7 @@ export function CreateForm({ initialStocks }: { initialStocks?: StocksResponse }
           {errors.stock && <p className="px-4 py-2 text-[13px] text-danger-fg border-t border-line">{errors.stock}</p>}
         </Module>
 
-        {!legacy && (
+        {!legacy && !hidden('buy') && (
           <Module>
             <ModuleHeader
               index="04"
@@ -525,7 +552,7 @@ export function CreateForm({ initialStocks }: { initialStocks?: StocksResponse }
           </Module>
         )}
 
-        {!legacy && (
+        {!legacy && !hidden('profile') && (
           <Module>
             <ModuleHeader index="05" title="Profile" />
             <div className="p-4 md:p-5 flex items-start justify-between gap-4">
@@ -541,22 +568,24 @@ export function CreateForm({ initialStocks }: { initialStocks?: StocksResponse }
         )}
       </div>
 
-      <div className="flex flex-col gap-5 lg:sticky lg:top-[72px]">
+      <div className={cx('flex flex-col gap-5', !compact && 'lg:sticky lg:top-[72px]')}>
         <Module ticks>
-          <ModuleHeader index="03" title="What happens" />
-          <ol className="px-4 pt-3 flex flex-col gap-2 text-[13px] text-ink-secondary">
-            {[
-              'A zero-admin B20 token with exactly 1,000,000,000 supply is created.',
-              `A Uniswap v4 pool opens against ${selected ? selected.symbol : 'the stock you pick'} at a ${formatUsd(fdvUsd, { compact: true })} valuation, priced from the live Chainlink feed.`,
-              'The whole supply is locked as liquidity forever; nobody can withdraw it. You hold none unless you buy at launch.',
-              `Every swap pays 1% in ${selected ? selected.symbol : 'the stock'}; you claim 70% of it any time from your wallet page.`,
-            ].map((text, i) => (
-              <li key={text} className="flex gap-3">
-                <span className="font-mono text-[11px] text-primary shrink-0 w-5">0{i + 1}</span>
-                <span>{text}</span>
-              </li>
-            ))}
-          </ol>
+          <ModuleHeader index="03" title={hidden('steps') ? 'Launch' : 'What happens'} />
+          {!hidden('steps') && (
+            <ol className="px-4 pt-3 flex flex-col gap-2 text-[13px] text-ink-secondary">
+              {[
+                'A zero-admin B20 token with exactly 1,000,000,000 supply is created.',
+                `A Uniswap v4 pool opens against ${selected ? selected.symbol : 'the stock you pick'} at a ${formatUsd(fdvUsd, { compact: true })} valuation, priced from the live Chainlink feed.`,
+                'The whole supply is locked as liquidity forever; nobody can withdraw it. You hold none unless you buy at launch.',
+                `Every swap pays 1% in ${selected ? selected.symbol : 'the stock'}; you claim 70% of it any time from your wallet page.`,
+              ].map((text, i) => (
+                <li key={text} className="flex gap-3">
+                  <span className="font-mono text-[11px] text-primary shrink-0 w-5">0{i + 1}</span>
+                  <span>{text}</span>
+                </li>
+              ))}
+            </ol>
+          )}
           <div className="px-4 pt-3 pb-2">
             <KeyValue k="Creation fee" v={feeEth === null ? '…' : `${feeEth} ETH + gas`} />
             <KeyValue k="Opening valuation" v={formatUsd(fdvUsd, { compact: true })} />
@@ -569,6 +598,7 @@ export function CreateForm({ initialStocks }: { initialStocks?: StocksResponse }
             {!deployment && <Banner tone="danger">Contracts are not configured on this server.</Banner>}
             {pausedNow && <Banner tone="warning">{pausedNow}</Banner>}
             {reviewError && <Banner tone="danger">{reviewError}</Banner>}
+            {eligibility.blocked ? <RegionBlocked action="launch" /> : eligibility.needsCheck && <EligibilityCheck eligibility={eligibility} action="launch" />}
             {!onBase ? (
               <ConnectButton full size="lg" />
             ) : (
@@ -600,7 +630,8 @@ export function CreateForm({ initialStocks }: { initialStocks?: StocksResponse }
           onLaunched={({ token, txHash }) => {
             // The salt is spent only by a launch that landed; a revert keeps it, and the address.
             renewSalt();
-            router.push(`/token/${token.toLowerCase()}?tx=${txHash}`);
+            if (onLaunched) onLaunched({ token, txHash });
+            else router.push(`/token/${token.toLowerCase()}?tx=${txHash}`);
           }}
         />
       )}

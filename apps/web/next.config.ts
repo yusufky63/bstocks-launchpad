@@ -19,9 +19,19 @@ const nextConfig: NextConfig = {
         headers: [
           { key: 'X-Content-Type-Options', value: 'nosniff' },
           { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
-          { key: 'X-Frame-Options', value: 'DENY' },
           { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
         ],
+      },
+      // No other site may frame the launchpad, except the widgets under /embed, which exist to be
+      // framed. A widget's clicks still end in the visitor's own wallet, which a host page cannot
+      // draw over or answer for them.
+      {
+        source: '/((?!embed(?:/|$)).*)',
+        headers: [{ key: 'X-Frame-Options', value: 'DENY' }],
+      },
+      {
+        source: '/embed/:path*',
+        headers: [{ key: 'Content-Security-Policy', value: 'frame-ancestors *' }],
       },
     ];
   },

@@ -2,7 +2,7 @@ import 'server-only';
 
 import { parseAbi, type Address, type Hex } from 'viem';
 
-import { BASE_CONTRACTS, stockPairHookAbi } from '@stockpair/core';
+import { BASE_CONTRACTS, findStock, stockPairHookAbi } from '@stockpair/core';
 import { readMarket, tokenFeeSummary, tokenLifetime, type Db } from '@stockpair/core/db';
 
 import { cached, TTL } from './cache.server';
@@ -10,7 +10,8 @@ import { getPublicClient, serverDeployments } from './chain.server';
 import { hookOf } from './deployments';
 import { poolReserves } from './liquidity';
 import { toLaunchInfo, toMarketView, toProfileInfo, type MarketView } from './market-view';
-import type { LaunchInfo, ProfileInfo, TokenDetails, TokenFees, TokenLifetime, TokenPool } from './types';
+import { readLaunchOnchain } from './onchain.server';
+import type { LaunchInfo, ProfileInfo, TokenDetails, TokenFees, TokenLifetime, TokenPool, TokenResponse } from './types';
 
 const stateViewAbi = parseAbi(['function getSlot0(bytes32 poolId) view returns (uint160 sqrtPriceX96, int24 tick, uint24 protocolFee, uint24 lpFee)']);
 
@@ -140,4 +141,23 @@ export async function readTokenDetails(db: Db, market: MarketView): Promise<Omit
   }
 
   return { fees, lifetime, pool, links: externalLinks(market.token, market.poolId) };
+}
+
+/**
+ * What a token page opens with. A freshly launched token exists onchain before the indexer stores
+ * it, and the create form sends people on as soon as the wallet returns a hash, before the block
+ * lands: `tx` is that hash. Null means there is no such launch.
+ */
+export async function readTokenResponse(db: Db, token: string, tx?: string | null): Promise<TokenResponse | null> {
+  const indexed = await readTokenCached(db, token);
+  if (indexed) {
+    return { status: 'indexed', market: indexed.market, details: await readTokenDetails(db, indexed.market), launch: indexed.launch, profile: indexed.profile };
+  }
+  const onchain = await cached(`onchain:${token}`, 1_000, () => readLaunchOnchain(token as Address));
+  if (onchain) {
+    const stock = findStock(onchain.stock);
+    return { status: 'indexing', launch: { ...onchain, stockSymbol: stock?.symbol ?? null, stockTicker: stock?.ticker ?? null, stockDecimals: stock?.decimals ?? null } };
+  }
+  if (tx && /^0x[0-9a-fA-F]{64}$/u.test(tx)) return { status: 'pending', token, txHash: tx.toLowerCase() };
+  return null;
 }

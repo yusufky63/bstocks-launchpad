@@ -2,6 +2,7 @@
 
 import { useQuery, type UseQueryOptions } from '@tanstack/react-query';
 
+import { eligibilityHeaders } from './eligibility';
 import type { ActivityResponse, ApiErrorBody, CandlesResponse, HoldersResponse, MarketsResponse, QuoteView, StatsResponse, StocksResponse, SwapsResponse, TokenResponse } from './types';
 
 export class ApiError extends Error {
@@ -9,6 +10,7 @@ export class ApiError extends Error {
     readonly code: string,
     message: string,
     readonly status: number,
+    readonly details?: Record<string, unknown>,
   ) {
     super(message);
   }
@@ -18,18 +20,18 @@ export async function apiGet<T>(path: string): Promise<T> {
   const response = await fetch(path, { cache: 'no-store' });
   const body = (await response.json().catch(() => null)) as T | ApiErrorBody | null;
   if (!response.ok || (body && typeof body === 'object' && 'error' in body)) {
-    const err = body && typeof body === 'object' && 'error' in body ? body.error : { code: 'HTTP_ERROR', message: `Request failed (${response.status}).` };
-    throw new ApiError(err.code, err.message, response.status);
+    const err: ApiErrorBody['error'] = body && typeof body === 'object' && 'error' in body ? body.error : { code: 'HTTP_ERROR', message: `Request failed (${response.status}).` };
+    throw new ApiError(err.code, err.message, response.status, err.details);
   }
   return body as T;
 }
 
 export async function apiPost<T>(path: string, payload: unknown): Promise<T> {
-  const response = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
+  const response = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json', ...eligibilityHeaders() }, body: JSON.stringify(payload) });
   const body = (await response.json().catch(() => null)) as T | ApiErrorBody | null;
   if (!response.ok || (body && typeof body === 'object' && 'error' in body)) {
-    const err = body && typeof body === 'object' && 'error' in body ? body.error : { code: 'HTTP_ERROR', message: `Request failed (${response.status}).` };
-    throw new ApiError(err.code, err.message, response.status);
+    const err: ApiErrorBody['error'] = body && typeof body === 'object' && 'error' in body ? body.error : { code: 'HTTP_ERROR', message: `Request failed (${response.status}).` };
+    throw new ApiError(err.code, err.message, response.status, err.details);
   }
   return body as T;
 }

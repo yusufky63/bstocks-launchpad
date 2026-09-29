@@ -110,7 +110,7 @@ export type QuoteView = {
   liquidity: string;
 };
 
-export type ApiErrorBody = { error: { code: string; message: string } };
+export type ApiErrorBody = { error: { code: string; message: string; details?: Record<string, unknown> } };
 
 export type ActivityItem = {
   kind: 'launch' | 'swap';

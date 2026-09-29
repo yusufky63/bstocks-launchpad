@@ -9,6 +9,8 @@ import { base } from 'wagmi/chains';
 
 import { formatAmount, parseAmount } from '@stockpair/core';
 
+import { askEligibility, EligibilityCheck, RegionBlocked, useEligibility } from '@/components/common/eligibility';
+import { useEmbedHidden } from '@/components/embed/embed-sections';
 import { ConnectButton } from '@/components/layout/connect-button';
 import { Banner } from '@/components/ui/display';
 import { AmountInput, Segmented } from '@/components/ui/controls';
@@ -27,7 +29,7 @@ import { TradeReviewSheet } from './trade-review-sheet';
 const PCT_CHIPS = [25, 50, 75, 100];
 
 /** The most important interaction in the app: amount first, live executable quote, sticky CTA. */
-export function TradePanel({ market, initialSide = 'buy', onTraded, onEngagedChange, className }: { market: TradeMarket; initialSide?: 'buy' | 'sell'; onTraded?: () => void; onEngagedChange?: (engaged: boolean) => void; className?: string }) {
+export function TradePanel({ market, initialSide = 'buy', onTraded, onEngagedChange, className }: { market: TradeMarket; initialSide?: 'buy' | 'sell'; onTraded?: (trade: { txHash: Hash; side: 'buy' | 'sell' }) => void; onEngagedChange?: (engaged: boolean) => void; className?: string }) {
   // Trades go through the router of the deployment that launched this token, not the newest one.
   const deployment = deploymentOf(publicEnv.deployments, market);
   const { address, isConnected, chainId } = useAccount();
@@ -75,8 +77,18 @@ export function TradePanel({ market, initialSide = 'buy', onTraded, onEngagedCha
   const tokenBalance = (balances.data?.[1]?.result as bigint | undefined) ?? null;
   const balance = buy ? stockBalance : tokenBalance;
 
-  const quote = useQuote(market.token, side, amountIn);
+  const eligibility = useEligibility();
+  const hidden = useEmbedHidden();
+  // The server refuses a quote to this visitor until they answer, so none is asked for meanwhile.
+  const quoteRefused = !!eligibility.region?.restricted;
+  const quote = useQuote(market.token, side, quoteRefused ? null : amountIn);
   const q = quote.data;
+  const quoteErrorCode = quote.error?.code;
+  useEffect(() => {
+    // Refused although the page thought the answer was on file (it expired, or was withdrawn): read
+    // the region again so the question comes back.
+    if (quoteErrorCode === 'REGION_RESTRICTED') askEligibility();
+  }, [quoteErrorCode]);
   const insufficient = amountIn !== null && balance !== null && amountIn > balance;
   const stockUsd = market.stockUsd;
 
@@ -110,7 +122,7 @@ export function TradePanel({ market, initialSide = 'buy', onTraded, onEngagedCha
   // effectively no slippage floor. Match the quote to what is on screen before allowing review.
   const quoteMatches = Boolean(q && amountIn !== null && q.amountIn === amountIn.toString() && q.side === side);
   const canReview = Boolean(
-    onBase && deployment && amountIn && amountIn > 0n && q && !insufficient && quote.status === 'success' && quoteMatches && !quote.isPlaceholderData,
+    onBase && deployment && amountIn && amountIn > 0n && q && !insufficient && quote.status === 'success' && quoteMatches && !quote.isPlaceholderData && !eligibility.needsCheck && !eligibility.blocked,
   );
   const ctaLabel = buy ? `Buy ${market.symbol}${inputUsd !== null ? ` · ${formatUsd(inputUsd)}` : ''}` : `Sell ${market.symbol}${inputUsd !== null ? ` · ≈ ${formatUsd(inputUsd)}` : ''}`;
 
@@ -127,7 +139,7 @@ export function TradePanel({ market, initialSide = 'buy', onTraded, onEngagedCha
     void queryClient.invalidateQueries({ queryKey: qk.candles(market.token) });
     void queryClient.invalidateQueries({ queryKey: qk.holders(market.token) });
     void queryClient.invalidateQueries({ queryKey: qk.token(market.token) });
-    onTraded?.();
+    onTraded?.({ txHash: hash, side });
   };
 
   return (
@@ -164,13 +176,15 @@ export function TradePanel({ market, initialSide = 'buy', onTraded, onEngagedCha
           </div>
         </div>
 
-        <Segmented<number>
-          size="sm"
-          ariaLabel={buy ? 'Share of stock balance to spend' : 'Share of position to sell'}
-          value={pct}
-          onChange={applyPct}
-          options={PCT_CHIPS.map((p) => ({ value: p, label: p === 100 ? 'Max' : `${p}%`, disabled: !onBase || balance === null || balance === 0n, title: !onBase ? 'Connect a wallet on Base to use balance presets' : balance === 0n ? `No ${inputSymbol} to ${buy ? 'spend' : 'sell'}` : `${p}% of your ${inputSymbol}` }))}
-        />
+        {!hidden('presets') && (
+          <Segmented<number>
+            size="sm"
+            ariaLabel={buy ? 'Share of stock balance to spend' : 'Share of position to sell'}
+            value={pct}
+            onChange={applyPct}
+            options={PCT_CHIPS.map((p) => ({ value: p, label: p === 100 ? 'Max' : `${p}%`, disabled: !onBase || balance === null || balance === 0n, title: !onBase ? 'Connect a wallet on Base to use balance presets' : balance === 0n ? `No ${inputSymbol} to ${buy ? 'spend' : 'sell'}` : `${p}% of your ${inputSymbol}` }))}
+          />
+        )}
 
         <div className="flex items-center justify-between text-[13px] text-ink-secondary">
           <span>{buy ? `${inputSymbol} balance` : 'Your position'}</span>
@@ -206,8 +220,11 @@ export function TradePanel({ market, initialSide = 'buy', onTraded, onEngagedCha
             <SlippageControl />
           </div>
           {(amountIn === null || amountIn === 0n) && <p className="text-[13px] text-ink-muted">Enter an amount to see a live quote from the pool.</p>}
-          {amountIn !== null && amountIn > 0n && quote.isPending && !q && <p className="text-[13px] text-ink-muted">Asking the pool…</p>}
-          {quote.isError && <p className="text-[13px] text-danger-fg">{quote.error.message}</p>}
+          {amountIn !== null && amountIn > 0n && quoteRefused && (
+            <p className="text-[13px] text-ink-muted">{eligibility.blocked ? 'Quotes are not available from your region.' : 'Answer the eligibility question below to see a live quote.'}</p>
+          )}
+          {amountIn !== null && amountIn > 0n && !quoteRefused && quote.isPending && !q && <p className="text-[13px] text-ink-muted">Asking the pool…</p>}
+          {quote.isError && quote.error.code !== 'REGION_RESTRICTED' && <p className="text-[13px] text-danger-fg">{quote.error.message}</p>}
           {q && amountIn !== null && amountIn > 0n && (
             <div className={cx(quote.isFetching && 'opacity-60 transition-fast')}>
               <div className="flex items-baseline justify-between gap-3">
@@ -237,6 +254,7 @@ export function TradePanel({ market, initialSide = 'buy', onTraded, onEngagedCha
         )}
         {!deployment && <Banner tone="danger">{publicEnv.deployments.length > 0 ? 'The contracts this token was launched with are not configured on this site.' : 'Contracts are not configured on this server.'}</Banner>}
 
+        {eligibility.blocked ? <RegionBlocked /> : eligibility.needsCheck && <EligibilityCheck eligibility={eligibility} />}
         {!isConnected ? (
           <ConnectButton full size="lg" />
         ) : !onBase ? (
@@ -247,10 +265,14 @@ export function TradePanel({ market, initialSide = 'buy', onTraded, onEngagedCha
           </Button>
         )}
 
-        <p className="text-[12px] text-ink-muted">
-          Pool {market.symbol}/{market.stock.symbol} on Uniswap v4 · 1% fee in {market.stock.symbol}, 70% to the creator · liquidity locked forever.
-        </p>
-        <p className="text-[12px] text-ink-secondary border-t border-line pt-3">Anyone can launch a token here. Check the creator&apos;s holdings, the holders and a live sell quote before you buy.</p>
+        {!hidden('notes') && (
+          <>
+            <p className="text-[12px] text-ink-muted">
+              Pool {market.symbol}/{market.stock.symbol} on Uniswap v4 · 1% fee in {market.stock.symbol}, 70% to the creator · liquidity locked forever.
+            </p>
+            <p className="text-[12px] text-ink-secondary border-t border-line pt-3">Anyone can launch a token here. Check the creator&apos;s holdings, the holders and a live sell quote before you buy.</p>
+          </>
+        )}
       </div>
 
       {q && amountIn !== null && deployment && quoteMatches && (
