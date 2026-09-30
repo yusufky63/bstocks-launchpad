@@ -8,12 +8,16 @@ import {
   EMBED_HEIGHT,
   EMBED_MESSAGE_SOURCE,
   THEME_SCRIPT,
+  EMBED_MODULES,
+  embedHeight,
   embedLinkAction,
   embedMessage,
   embedPath,
   embedResizeScript,
   embedSnippet,
   parseEmbedEligibility,
+  parseEmbedPicker,
+  parseEmbedShow,
   parseEmbedSide,
   parseEmbedTheme,
   withEmbedParams,
@@ -89,6 +93,41 @@ describe('widget options', () => {
     expect(withEmbedParams('/embed/trade/0x1', '?eligibility=sometimes')).toBe('/embed/trade/0x1');
   });
 
+});
+
+describe('chart, lists and the stock picker', () => {
+  it('reads the modules and the picker style from the query, dropping anything unknown', () => {
+    expect(parseEmbedShow('holders, CHART,nope,chart')).toEqual(['chart', 'holders']);
+    expect(parseEmbedShow(null)).toEqual([]);
+    expect(parseEmbedPicker('select')).toBe('select');
+    expect(parseEmbedPicker('dropdown')).toBe('grid');
+  });
+
+  it('puts the modules on the trade widget only, and the picker on the create widget only', () => {
+    expect(embedPath({ widget: 'trade', token: TOKEN, show: ['holders', 'chart'] })).toBe(`/embed/trade/${TOKEN.toLowerCase()}?show=chart,holders`);
+    expect(embedPath({ widget: 'create', show: ['chart'], picker: 'select' })).toBe('/embed/create?picker=select');
+    expect(embedPath({ widget: 'trade', token: TOKEN, picker: 'select' })).toBe(`/embed/trade/${TOKEN.toLowerCase()}`);
+  });
+
+  it('fixes the stock only when the host named one', () => {
+    expect(embedPath({ widget: 'create', stock: STOCK, hide: ['stocks'] })).toBe(`/embed/create?stock=${STOCK}&hide=stocks`);
+    // Without a stock there is nothing to fix, and a launch always needs one: the picker stays.
+    expect(embedPath({ widget: 'create', hide: ['stocks', 'steps'] })).toBe('/embed/create?hide=steps');
+  });
+
+  it('starts the frame taller for every module the trade widget adds', () => {
+    const plain = embedHeight({ widget: 'trade' });
+    expect(plain).toBe(EMBED_HEIGHT.trade);
+    const chart = embedHeight({ widget: 'trade', show: ['chart'] });
+    const lists = embedHeight({ widget: 'trade', show: ['trades'] });
+    expect(chart).toBeGreaterThan(plain);
+    expect(lists).toBeGreaterThan(plain);
+    // Trades and holders share one list, so both cost what one does.
+    expect(embedHeight({ widget: 'trade', show: ['trades', 'holders'] })).toBe(lists);
+    expect(embedHeight({ widget: 'trade', show: [...EMBED_MODULES] })).toBe(chart + lists - plain);
+    expect(embedHeight({ widget: 'create', show: [...EMBED_MODULES] })).toBe(EMBED_HEIGHT.create);
+    expect(embedSnippet(APP, { widget: 'trade', token: TOKEN, show: ['chart'] })).toContain(`height="${chart}"`);
+  });
 });
 
 describe('theme before paint', () => {

@@ -2,22 +2,12 @@
 
 import { useCallback, useSyncExternalStore } from 'react';
 
-export const DEFAULT_SLIPPAGE_BPS = 100;
-/** Trade slippage bounds: 0.1% to 5%. The cap is a safeguard, so a value outside it is refused, never clamped. */
-export const SLIPPAGE_MIN_BPS = 10;
-export const SLIPPAGE_MAX_BPS = 500;
-/** Amber from here: the review sheet spells out how little the trade may return. */
-export const SLIPPAGE_HIGH_BPS = 300;
-/** Price impact tiers, in percent: amber from 5, red with a required tick from 25. */
-export const IMPACT_WARN_PCT = 5;
-export const IMPACT_SEVERE_PCT = 25;
+import { DEFAULT_SLIPPAGE_BPS, IMPACT_SEVERE_PCT, IMPACT_WARN_PCT, isValidSlippageBps, SLIPPAGE_HIGH_BPS } from './limits';
+
+export { DEFAULT_SLIPPAGE_BPS, IMPACT_SEVERE_PCT, IMPACT_WARN_PCT, isValidSlippageBps, SLIPPAGE_HIGH_BPS, SLIPPAGE_MAX_BPS, SLIPPAGE_MIN_BPS } from './limits';
 
 const KEY = 'stockpair:slippageBps';
 const EVENT = 'stockpair:settings';
-
-export function isValidSlippageBps(v: number): boolean {
-  return Number.isInteger(v) && v >= SLIPPAGE_MIN_BPS && v <= SLIPPAGE_MAX_BPS;
-}
 
 /**
  * A typed percentage as basis points, or the one error to show. Out-of-range input is an error, not

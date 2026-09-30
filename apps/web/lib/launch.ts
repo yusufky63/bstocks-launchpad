@@ -1,4 +1,3 @@
-import { useCallback, useState } from 'react';
 import { encodeFunctionData, type Address, type Hex } from 'viem';
 
 import { quoteLaunchBuy, stockPairFactoryAbi, tokenIsCurrency0, type LaunchBuyQuote } from '@stockpair/core';
@@ -47,16 +46,6 @@ export function parseToleranceInput(text: string): { bps: number } | { error: st
 export function randomSalt(): Hex {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
   return `0x${Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')}`;
-}
-
-/**
- * One salt per form session. The predicted address the creator reviews depends on it, so it must
- * not change between renders or after a failed attempt; only a successful launch uses it up.
- */
-export function useLaunchSalt(): readonly [Hex, () => void] {
-  const [salt, setSalt] = useState(randomSalt);
-  const renew = useCallback(() => setSalt(randomSalt()), []);
-  return [salt, renew] as const;
 }
 
 /** The creator's quote for a buy at launch: the exact replay in @stockpair/core, in the address order the factory uses. */

@@ -92,6 +92,9 @@ describe('every send site is attributed', () => {
   it.each(files.map((f) => relative(root, f)))('%s', (relativePath) => {
     const source = readFileSync(join(root, relativePath), 'utf8');
     if (relativePath.endsWith('attribution.ts')) return;
+    // Example code for other apps, inside string literals. The calls it sends come from /api/tx,
+    // whose data already ends in the suffix (test/tx.test.ts checks that).
+    if (relativePath.replaceAll('\\', '/') === 'lib/api-guide.ts') return;
     for (const call of SEND_CALLS) {
       let at = source.indexOf(call);
       while (at !== -1) {

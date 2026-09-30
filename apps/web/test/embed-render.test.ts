@@ -56,6 +56,7 @@ const market = {
   change24hPercent: 4.2,
   stockUsd: 230,
   stockFeedStatus: 'live',
+  holders: 3,
 } as never;
 
 describe('trade widget', () => {
@@ -85,6 +86,54 @@ describe('trade widget', () => {
     expect(html).toContain('Launch submitted · waiting for Base');
     expect(html).toContain('Launch transaction');
     expect(html).not.toContain('aria-label="Trade side"');
+  });
+});
+
+describe('trade widget with a chart and lists', () => {
+  const indexed = { status: 'indexed' as const, market, launch: { factory: null, hook: null, creatorBuy: null }, profile: { onchain: 'immutable' as const, contractUri: 'ipfs://x', contentAddressed: true, updates: 0, lastUpdatedAt: null, lockedAt: null } };
+
+  it('adds the chart above the panel and only the lists the host asked for below it', () => {
+    const html = render(createElement(TradeWidget, { address: TOKEN, initialData: indexed, show: ['chart', 'holders'] }));
+    expect(html).toContain('aria-label="Chart source"');
+    expect(html.indexOf('aria-label="Chart source"')).toBeLessThan(html.indexOf('aria-label="Trade side"'));
+    expect(html).toContain('aria-label="Token records"');
+    expect(html).toContain('Holders · 3');
+    expect(html).not.toMatch(/>Trades(?: ·[^<]*)?</u);
+    expect(html).not.toContain('Fees &amp; pool');
+  });
+
+  it('shows neither without show', () => {
+    const html = render(createElement(TradeWidget, { address: TOKEN, initialData: indexed }));
+    expect(html).not.toContain('aria-label="Chart source"');
+    expect(html).not.toContain('aria-label="Token records"');
+  });
+
+  it('says when a launch still being indexed will get them', () => {
+    const launch = { token: TOKEN, stock: NVDA.address.toLowerCase(), creator: '0x2222222222222222222222222222222222222222', name: 'Fresh', symbol: 'FRSH', contractURI: 'ipfs://x', launchedAt: '2026-09-29T10:00:00.000Z', stockSymbol: NVDA.symbol, stockTicker: NVDA.ticker, stockDecimals: 8, stockUsd8: '23000000000', factory: '0x3333333333333333333333333333333333333333', hook: '0x4444444444444444444444444444444444444444' };
+    const html = render(createElement(TradeWidget, { address: TOKEN, initialData: { status: 'indexing', launch }, show: ['chart', 'trades'] }));
+    expect(html).toContain('The chart and the lists appear once the launch is indexed');
+    expect(html).toContain('aria-label="Trade side"');
+  });
+});
+
+describe('create widget stock picker', () => {
+  it('offers the stocks in one dropdown when the host asks', () => {
+    const html = render(createElement(CreateWidget, { initialStocks: stocks, stockPicker: 'select' }));
+    expect(html).toMatch(/<select aria-label="Paired stock"/u);
+    expect(html).toContain(`>${NVDA.symbol} · ${NVDA.name}`);
+    expect(html).not.toContain('role="radiogroup" aria-label="Paired stock"');
+  });
+
+  it('shows a fixed stock as one row, with nothing to pick', () => {
+    const html = render(createElement(CreateWidget, { initialStocks: stocks, lockedStock: NVDA.address }));
+    expect(html).toContain('your token trades against it');
+    expect(html).not.toMatch(/<select aria-label="Paired stock"/u);
+    expect(html).not.toContain('role="radiogroup" aria-label="Paired stock"');
+  });
+
+  it('brings the picker back when the fixed stock is not one it can launch against', () => {
+    const html = render(createElement(CreateWidget, { initialStocks: stocks, lockedStock: '0x9999999999999999999999999999999999999999' }));
+    expect(html).toContain('role="radiogroup" aria-label="Paired stock"');
   });
 });
 
@@ -125,6 +174,8 @@ describe('widget builder', () => {
     expect(html).toContain(`<iframe src="/embed/trade/${publicEnv.featuredToken}"`);
     expect(html).toContain('Optional · fit the frame to the widget');
     expect(html).toContain('before you reward anyone for one, look the transaction up on Base');
+    expect(html).toContain('aria-label="Parts to add under the trade panel"');
+    for (const label of ['Price chart', 'Trades', 'Holders']) expect(html).toContain(`>${label}</button>`);
   });
 
   it('opens on a token passed in', () => {

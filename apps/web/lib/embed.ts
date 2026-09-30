@@ -16,6 +16,8 @@ export type TradeSide = 'buy' | 'sell';
  * `always` when it wants the statement from everyone on its own site.
  */
 export type EmbedEligibility = 'region' | 'always';
+/** How the create widget offers the stocks: the site's grid of tiles, or one compact dropdown. */
+export type EmbedPicker = 'grid' | 'select';
 
 /**
  * Default frame heights. The trade widget fits whole at a 420px width, a live quote included. The
@@ -23,6 +25,16 @@ export type EmbedEligibility = 'region' | 'always';
  * optional resize script grows the frame to the full form instead.
  */
 export const EMBED_HEIGHT: Record<EmbedWidget, number> = { trade: 820, create: 900 };
+
+/**
+ * Optional parts of the trade widget a host adds with `?show=`: the price chart and the token's
+ * trades and holders lists. Off by default: the plain widget is a trade panel and nothing else.
+ */
+export const EMBED_MODULES = ['chart', 'trades', 'holders'] as const;
+export type EmbedModule = (typeof EMBED_MODULES)[number];
+export const EMBED_MODULE_LABELS: Record<EmbedModule, string> = { chart: 'Price chart', trades: 'Trades', holders: 'Holders' };
+/** What each added module takes at a 420px width. */
+const MODULE_HEIGHT = { chart: 460, records: 620 } as const;
 
 /** Every message a widget posts carries this, so a host can tell ours from any other frame's. */
 export const EMBED_MESSAGE_SOURCE = 'bstocks-launchpad';
@@ -49,20 +61,33 @@ export function parseEmbedEligibility(value: string | null | undefined): EmbedEl
   return value === 'always' ? 'always' : 'region';
 }
 
+export function parseEmbedPicker(value: string | null | undefined): EmbedPicker {
+  return value === 'select' ? 'select' : 'grid';
+}
+
+/** `?show=chart,holders`: the known modules, once each, in a fixed order; anything else is dropped. */
+export function parseEmbedShow(value: string | null | undefined): EmbedModule[] {
+  const asked = new Set((value ?? '').split(',').map((part) => part.trim().toLowerCase()));
+  return EMBED_MODULES.filter((module) => asked.has(module));
+}
+
 /**
  * Parts of a widget a host may leave out, so it fits the host's page. What a hidden part controls
  * falls back to its safe default: no buy at launch, a profile that cannot be edited onchain, no
- * links. The price, the fee, the minimum received and the eligibility question are never optional.
+ * links. Hiding the stock picker fixes the stock the host named with `stock`, and does nothing
+ * without one: a launch always needs a stock, so the picker comes back rather than a dead form.
+ * The price, the fee, the minimum received and the eligibility question are never optional.
  */
 export const EMBED_SECTIONS = {
   trade: ['header', 'presets', 'notes'],
-  create: ['header', 'links', 'buy', 'profile', 'steps'],
+  create: ['header', 'stocks', 'links', 'buy', 'profile', 'steps'],
 } as const satisfies Record<EmbedWidget, readonly string[]>;
 export type EmbedSection = (typeof EMBED_SECTIONS)[EmbedWidget][number];
 const ALL_SECTIONS = new Set<string>([...EMBED_SECTIONS.trade, ...EMBED_SECTIONS.create]);
 
 export const EMBED_SECTION_LABELS: Record<EmbedSection, string> = {
   header: 'Title',
+  stocks: 'Stock picker',
   presets: 'Balance presets',
   notes: 'Pool notes',
   links: 'Website and socials',
@@ -144,8 +169,12 @@ export type EmbedOptions = {
   token?: string;
   /** Trade widget: the side it opens on. */
   side?: TradeSide;
-  /** Create widget: the stock it opens with. */
+  /** Trade widget: the chart and lists added under the panel. */
+  show?: readonly EmbedModule[];
+  /** Create widget: the stock it opens with, or the only one it offers with `hide: ['stocks']`. */
   stock?: string;
+  /** Create widget: tiles or a dropdown. */
+  picker?: EmbedPicker;
   theme?: EmbedTheme;
   eligibility?: EmbedEligibility;
   /** Sections to leave out; any that do not belong to this widget are ignored. */
@@ -164,20 +193,35 @@ export function embedPath(options: EmbedOptions): string {
     if (!options.token || !ADDRESS.test(options.token)) throw new Error('The trade widget needs a token address.');
     path = `/embed/trade/${options.token.toLowerCase()}`;
     if (options.side === 'sell') params.set('side', 'sell');
+    const show = parseEmbedShow((options.show ?? []).join(','));
+    if (show.length > 0) params.set('show', show.join(','));
   } else {
     path = '/embed/create';
     if (options.stock && ADDRESS.test(options.stock)) params.set('stock', options.stock.toLowerCase());
+    if (options.picker === 'select') params.set('picker', 'select');
   }
   if (options.theme === 'light' || options.theme === 'dark') params.set('theme', options.theme);
   if (options.eligibility === 'always') params.set('eligibility', 'always');
   const own: readonly string[] = EMBED_SECTIONS[options.widget];
-  const hide = parseEmbedHide((options.hide ?? []).join(',')).filter((section) => own.includes(section));
+  const fixedStock = options.widget === 'create' && !!options.stock && ADDRESS.test(options.stock);
+  const hide = parseEmbedHide((options.hide ?? []).join(','))
+    .filter((section) => own.includes(section))
+    .filter((section) => section !== 'stocks' || fixedStock);
   if (hide.length > 0) params.set('hide', hide.join(','));
   const accent = parseEmbedAccent(options.accent);
   if (accent) params.set('accent', accent.slice(1));
   // Commas are legal in a query; left unescaped, `hide=steps,buy` stays readable in the host's code.
   const query = params.toString().replaceAll('%2C', ',');
   return query ? `${path}?${query}` : path;
+}
+
+/** The frame height the code starts with: the trade widget grows by what `show` adds under it. */
+export function embedHeight(options: Pick<EmbedOptions, 'widget' | 'show'>): number {
+  if (options.widget === 'create') return EMBED_HEIGHT.create;
+  const show = parseEmbedShow((options.show ?? []).join(','));
+  const chart = show.includes('chart') ? MODULE_HEIGHT.chart : 0;
+  const records = show.some((module) => module !== 'chart') ? MODULE_HEIGHT.records : 0;
+  return EMBED_HEIGHT.trade + chart + records;
 }
 
 function escapeAttribute(value: string): string {
@@ -192,7 +236,7 @@ export function embedSnippet(appUrl: string, options: EmbedOptions): string {
     '<iframe',
     `  src="${escapeAttribute(src)}"`,
     `  title="${title}"`,
-    `  width="100%" height="${EMBED_HEIGHT[options.widget]}"`,
+    `  width="100%" height="${embedHeight(options)}"`,
     '  style="border:0;max-width:480px;border-radius:8px"',
     '  allow="clipboard-write"',
     '  loading="lazy"',

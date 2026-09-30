@@ -6,8 +6,11 @@ import { BASE_CONTRACTS, BASE_STOCKS } from '@stockpair/core';
 
 import { AddressLabel } from '@/components/ui/display';
 import { Badge, KeyValue, LinkButton, Module, ModuleHeader, PageTitle } from '@/components/ui/primitives';
+import { CodeBlock } from '@/components/widgets/code-block';
+import { apiLaunchExample, apiRules, apiSwapExample } from '@/lib/api-guide';
 import { EMBED_HEIGHT, EMBED_MESSAGE_SOURCE } from '@/lib/embed';
 import { publicEnv } from '@/lib/env';
+import { API_LIMITS } from '@/lib/rate-limit.server';
 
 import { deploymentLabel, ERRORS, EVENTS, FUNCTIONS, THRESHOLDS, ZERO_ADMIN, type RefItem } from './reference';
 
@@ -261,6 +264,13 @@ export default function DocsPage() {
 
           <Section id="api">
             <p>Most responses use the indexer&apos;s tables plus live pool reads. A confirmed launch can be quoted and traded directly from its factory and pool before indexing. Missing data is <code>null</code>, never a placeholder. Reads are memoised server-side for 3 to 15 seconds.</p>
+            <div className="border border-line rounded-[6px] px-3 mb-2">
+              <h3 className="eyebrow pt-2 pb-1">Configuration</h3>
+              {apiRules(publicEnv.appUrl).map((rule) => (
+                <KeyValue key={rule.label} k={rule.label} v={rule.text} mono={false} />
+              ))}
+              <KeyValue k="Limits" v={`per caller, a minute: ${API_LIMITS.quote} quotes, ${API_LIMITS.tx} transaction builds, ${API_LIMITS.token} token reads, ${API_LIMITS.wallet} wallet reads`} mono={false} />
+            </div>
             <KeyValue k="GET /api/markets" v="?stock=&q=&creator=&limit=&offset= · list of markets" mono={false} />
             <KeyValue k="GET /api/stocks" v="the 13 quote stocks with Chainlink price and feed status" mono={false} />
             <KeyValue k="GET /api/tokens/:address" v="market row, fees, lifetime figures, pool reserves, links, launch.creatorBuy, profile.onchain" mono={false} />
@@ -276,17 +286,29 @@ export default function DocsPage() {
             <KeyValue k="GET /api/activity" v="?limit=&token=&actor= · launches and swaps feed" mono={false} />
             <KeyValue k="POST /api/quote" v="{ token, side, amountIn } · exact-in quote from the v4 Quoter, including confirmed launches awaiting indexing" mono={false} />
             <KeyValue k="POST /api/metadata" v="multipart · pins image and ERC-7572 JSON to IPFS · with token, the name and symbol come from the launch record" mono={false} />
+            <KeyValue k="POST /api/tx/swap" v="{ token, side, amountIn, account, recipient?, slippageBps?, builderCode? } · the approve and swapExactIn calls for that account, with the quote, the minimum output, the deadline and a simulation" mono={false} />
+            <KeyValue k="POST /api/tx/launch" v="{ account, name, symbol, contractURI, stock, metadataEditable?, salt?, buy?: { stockIn, toleranceBps?, acknowledgeShare? }, builderCode? } · the approve and launchWithOptions or launchAndBuy calls, with the predicted token address" mono={false} />
             <KeyValue k="GET /api/health" v="database, schema version, contracts, launch hooks no configured deployment covers, indexer lag, chain head · ok is false while the schema is behind this build or a launch hook is not configured" mono={false} />
             <KeyValue k="GET /api/launch-config" v="what a site needs to run a launch in its own UI: chain id, the newest factory, hook and router with their deploy block, the builder code, the deadline, the form limits and this site's page URLs · the creation fee and opening valuation are left out on purpose: read them from the factory right before the wallet opens" mono={false} />
             <KeyValue k="GET /api/region" v="the caller's country, the mode, and whether quotes and pins are refused until the caller confirms eligibility" mono={false} />
             <KeyValue k="POST /api/region" v="{ confirm } · the caller's own statement that they are not a US person, kept as a cookie for 30 days · refused from any other site's page" mono={false} />
             <KeyValue
               k="x-bstocks-eligibility: confirmed"
-              v="request header · the same statement for a site that asks it in its own UI: sent on /api/quote, /api/metadata and /api/region, it counts as the cookie does. Send it only after the visitor ticked your own 'not a US person' box"
+              v="request header · the same statement for a site that asks it in its own UI: sent on /api/quote, /api/metadata, /api/tx and /api/region, it counts as the cookie does. Send it only after the visitor ticked your own 'not a US person' box"
               mono={false}
             />
             <p className="pt-2">
-              <strong>Partner access.</strong> Browsers on listed partner origins (zkCodex and its preview deployments; <code>PARTNER_ORIGINS</code> replaces the list) may read <code>/api/launch-config</code>, <code>/api/stocks</code>, <code>/api/markets</code>, <code>/api/region</code> and <code>/api/health</code>, and post to <code>/api/metadata</code>. The calls come from the visitor&apos;s own browser, never a partner server, so the pin limit and the eligibility rule apply to each visitor rather than to the partner as a whole. Quotes, wallets, token detail and activity stay closed to other origins until those routes have limits of their own. A partner&apos;s launch still goes from the visitor&apos;s wallet straight to the factory, so the visitor is the creator. Any site can use the <a href="#widgets" className="text-primary">widgets</a> instead, which need no listing.
+              <strong>Building transactions.</strong> The two <code>/api/tx</code> routes return the calls this site&apos;s own trade panel and create form send, built by the same code, for the <code>account</code> that will send them. Nothing is signed or sent: the caller hands <code>calls</code> to that account&apos;s wallet in order, or as one EIP-5792 batch. An approval is for the exact amount, to the exact contract that spends it, and appears only when the allowance is short; then the final call cannot be simulated yet, and <code>simulation</code> says so. The deadline is ten minutes from the latest block, so a caller whose approval took longer asks again. A launch&apos;s token address depends on the account and the salt; send the same <code>salt</code> to keep it. A buy at launch keeps this site&apos;s limits: 15% of the supply or more needs <code>acknowledgeShare</code> after the creator was shown the share, and half the supply is never built. <code>builderCode</code> adds the caller&apos;s own ERC-8021 code beside this site&apos;s, so the transaction is attributed to both.
+            </p>
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+              <CodeBlock label="A trade" code={apiSwapExample(publicEnv.appUrl)} />
+              <CodeBlock label="A launch" code={apiLaunchExample(publicEnv.appUrl)} />
+            </div>
+            <p>
+              <strong>Limits.</strong> Each caller may make {API_LIMITS.quote} quotes, {API_LIMITS.tx} transaction builds, {API_LIMITS.token} token reads (detail, trades, candles, holders) and {API_LIMITS.wallet} wallet reads a minute; more answer <code>429</code> with <code>retry-after</code>. The count is per server instance, so it bounds a client in a loop rather than guaranteeing a quota.
+            </p>
+            <p>
+              <strong>Partner access.</strong> Browsers on listed partner origins (zkCodex and its preview deployments; <code>PARTNER_ORIGINS</code> replaces the list) may read <code>/api/launch-config</code>, <code>/api/stocks</code>, <code>/api/markets</code>, <code>/api/activity</code>, <code>/api/region</code>, <code>/api/health</code>, one token with its trades, candles and holders, and a wallet, and post to <code>/api/metadata</code>, <code>/api/quote</code> and the two <code>/api/tx</code> routes. The calls come from the visitor&apos;s own browser, never a partner server, so the limits and the eligibility rule apply to each visitor rather than to the partner as a whole. A partner&apos;s launch still goes from the visitor&apos;s wallet straight to the factory, so the visitor is the creator. Any site can use the <a href="#widgets" className="text-primary">widgets</a> instead, which need no listing.
             </p>
           </Section>
 
@@ -298,13 +320,15 @@ export default function DocsPage() {
               A widget is this site running inside the frame: the same quote endpoint, slippage and impact limits, review step, eligibility rule and contracts. The visitor connects their own wallet in the frame and signs there; the host page never sees a key, an approval, a balance or an address. A launch from the create widget comes from the visitor&apos;s wallet, so the visitor is the creator and earns the creator&apos;s 70%; the host earns no share of the fees. The trade widget follows a new launch from submitted to indexed without reloading, and the create widget moves to the new token&apos;s trade widget once the wallet returns a hash. A link to any other page of the site opens in a new tab.
             </p>
             <KeyValue k="side" v="trade · sell opens on Sell · default Buy" mono={false} />
-            <KeyValue k="stock" v="create · the address of the stock the form opens with" mono={false} />
+            <KeyValue k="show" v="trade · a comma list of chart, trades, holders · the token page's own chart above the panel, and one list of trades and holders below it, ten rows a page · default none" mono={false} />
+            <KeyValue k="stock" v="create · the address of the stock the form opens with · with hide=stocks it is the only one offered" mono={false} />
+            <KeyValue k="picker" v="create · select offers the stocks in one dropdown instead of the grid of tiles" mono={false} />
             <KeyValue k="theme" v="light or dark · default follows the visitor's own setting" mono={false} />
             <KeyValue k="eligibility" v="always asks every visitor the eligibility question before their first trade or launch · default asks only where the server requires it" mono={false} />
             <KeyValue k="accent" v="a six-digit hex colour for the primary blue · the pressed shade, tint and button text are derived for each theme" mono={false} />
-            <KeyValue k="hide" v="a comma list · trade: header, presets, notes · create: header, links, buy, profile, steps · a hidden choice keeps its safe default: no buy at launch, a fixed profile" mono={false} />
+            <KeyValue k="hide" v="a comma list · trade: header, presets, notes · create: header, stocks, links, buy, profile, steps · a hidden choice keeps its safe default: no buy at launch, a fixed profile, the named stock · stocks is ignored without a stock" mono={false} />
             <p className="pt-2">
-              The price, fee, minimum received, review step, eligibility question and the &quot;powered by&quot; line cannot be hidden. The default frame is {EMBED_HEIGHT.trade}px tall for trade and {EMBED_HEIGHT.create}px for create, which scrolls inside the frame; the optional script on the Widgets page grows the frame to the widget.
+              The price, fee, minimum received, review step, eligibility question and the &quot;powered by&quot; line cannot be hidden. The default frame is {EMBED_HEIGHT.trade}px tall for trade, taller with a chart or lists, and {EMBED_HEIGHT.create}px for create, which scrolls inside the frame; the optional script on the Widgets page grows the frame to the widget. A host page with its own <code>Content-Security-Policy</code> has to allow this site in <code>frame-src</code>, and must not sandbox the iframe: wallets open popups and browser wallets inject into the frame.
             </p>
             <p>
               <strong>Events.</strong> The widget posts to its host with <code>source: &apos;{EMBED_MESSAGE_SOURCE}&apos;</code>: <code>ready</code> with the widget, <code>resize</code> with its height, <code>swap</code> with the token, side and transaction hash, and <code>launch</code> with the token and transaction hash. Check <code>event.origin</code>. Any page can post a message that looks like these, so treat swap and launch as a hint to refresh, and look the transaction up on Base before rewarding anyone for it.
@@ -413,7 +437,7 @@ export default function DocsPage() {
               <li><strong>Profiles are signed, not trusted.</strong> Off-chain profile edits, for fixed-profile tokens only, require an EIP-712 signature from the launch creator over the exact fields and image hash, with a 15-minute validity window and monotonic timestamps against replay. Onchain edits of an editable profile come only from the creator&apos;s own transaction.</li>
               <li><strong>Input validation.</strong> Every API parameter is schema-checked; addresses are checksummed and lower-cased; metadata uploads are limited to 2 MB images of four types and 1,000-character descriptions; X and Telegram links are normalised to <code>https://x.com/handle</code> and <code>https://t.me/handle</code>.</li>
               <li><strong>Framing.</strong> Only the widget pages under <code>/embed</code> may be framed, and by any site; every other page refuses. A widget holds no keys either: each trade or launch still ends in the visitor&apos;s own wallet, which a host page cannot draw over or answer for. Links out of a widget open a new tab rather than loading the site inside the host&apos;s frame.</li>
-              <li><strong>Cross-origin reads and writes.</strong> Other origins get API access only on the listed partner routes, from a visitor&apos;s browser, and never with credentials. The eligibility answer can only be given on this site&apos;s own pages: <code>POST /api/region</code> refuses a request whose <code>Origin</code> is another site.</li>
+              <li><strong>Cross-origin reads and writes.</strong> Other origins get API access only on the listed partner routes, from a visitor&apos;s browser, and never with credentials; every route they can post to or poll carries a per-caller limit. The eligibility answer can only be given on this site&apos;s own pages: <code>POST /api/region</code> refuses a request whose <code>Origin</code> is another site.</li>
               <li><strong>Trading safety.</strong> Quotes come from the v4 Quoter; swaps carry a minimum output from the user&apos;s slippage setting and a 10-minute deadline; the swap is simulated before the wallet opens. On the newest hook a swap that does not fill the stock amount it asked for reverts instead of paying a fee on the part that never traded.</li>
             </ul>
           </Section>

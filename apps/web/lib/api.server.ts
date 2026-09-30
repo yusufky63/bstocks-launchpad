@@ -22,7 +22,13 @@ export function parseAddressParam(value: string): `0x${string}` | null {
   }
 }
 
-export const limitSchema = z.coerce.number().int().min(1).max(200).default(50);
+/** An address in a JSON body, normalised the same way as one in a path. */
+export const addressSchema = z
+  .string()
+  .refine((v) => parseAddressParam(v) !== null, 'must be an address')
+  .transform((v) => parseAddressParam(v)!);
+
+export const limitSchema =z.coerce.number().int().min(1).max(200).default(50);
 
 /** Converts Date and bigint values so a row can be sent as JSON. */
 export function serializable<T>(value: T): T {

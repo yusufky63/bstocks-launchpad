@@ -3,7 +3,7 @@
 import { useRouter } from 'next/navigation';
 
 import { CreateForm } from '@/components/create/create-form';
-import { withEmbedParams } from '@/lib/embed';
+import { withEmbedParams, type EmbedPicker } from '@/lib/embed';
 import type { StocksResponse } from '@/lib/types';
 
 import { useEmbedHidden } from './embed-sections';
@@ -14,7 +14,7 @@ import { postToHost } from './embed-shell';
  * to the factory, so the visitor is the creator and keeps the creator's share, whatever site it is
  * on. Once the wallet returns a hash the frame moves to that token's trade widget.
  */
-export function CreateWidget({ initialStocks }: { initialStocks?: StocksResponse }) {
+export function CreateWidget({ initialStocks, stockPicker = 'grid', lockedStock = null }: { initialStocks?: StocksResponse; stockPicker?: EmbedPicker; lockedStock?: string | null }) {
   const router = useRouter();
   const hidden = useEmbedHidden();
   return (
@@ -28,6 +28,8 @@ export function CreateWidget({ initialStocks }: { initialStocks?: StocksResponse
       <CreateForm
         compact
         initialStocks={initialStocks}
+        stockPicker={stockPicker}
+        lockedStock={lockedStock}
         onLaunched={({ token, txHash }) => {
           const address = token.toLowerCase();
           postToHost({ type: 'launch', token: address, txHash });

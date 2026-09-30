@@ -13,7 +13,8 @@ import { apiGet, useHolders, useSwaps } from '@/lib/queries';
 import type { LaunchInfo, MarketView, ProfileInfo, SwapView, SwapsResponse, TokenDetails } from '@/lib/types';
 import { ExternalLink } from 'lucide-react';
 
-type Tab = 'trades' | 'holders' | 'fees' | 'details';
+export type RecordsTab = 'trades' | 'holders' | 'fees' | 'details';
+type Tab = RecordsTab;
 
 /** Page controls shared by the trades and holders tabs: a position readout and two steps. */
 function Pager({ page, from, to, total, busy, hasNext, onPrev, onNext, labels = ['Previous', 'Next'] }: { page: number; from: number; to: number; total?: number; busy: boolean; hasNext: boolean; onPrev: () => void; onNext: () => void; labels?: [string, string] }) {
@@ -53,15 +54,37 @@ const HOLDERS_MAX = 500;
 
 const TABS: readonly Tab[] = ['trades', 'holders', 'fees', 'details'];
 
-function tabFrom(value: string | null): Tab {
-  return TABS.includes(value as Tab) ? (value as Tab) : 'trades';
+function tabFrom(value: string | null, allowed: readonly Tab[]): Tab {
+  return allowed.includes(value as Tab) ? (value as Tab) : allowed[0]!;
 }
 
-export function TokenRecords({ market, launch, profile, links, fees, trades }: { market: MarketView; launch?: LaunchInfo; profile?: ProfileInfo; links?: TokenDetails['links']; fees?: ReactNode; trades?: number }) {
+/**
+ * `tabs` narrows the lists to the ones a caller wants (a widget shows trades and holders only), and
+ * `perPage` shortens a page where space is short. Defaults are the token page's.
+ */
+export function TokenRecords({
+  market,
+  launch,
+  profile,
+  links,
+  fees,
+  trades,
+  tabs = TABS,
+  perPage = PER_PAGE,
+}: {
+  market: MarketView;
+  launch?: LaunchInfo;
+  profile?: ProfileInfo;
+  links?: TokenDetails['links'];
+  fees?: ReactNode;
+  trades?: number;
+  tabs?: readonly Tab[];
+  perPage?: number;
+}) {
   // `?tab=holders` opens the holders list directly, so a link can point at it. Without this the
   // Telegram channel's Holders button and its Trade button landed on the same view.
   const search = useSearchParams();
-  const [tab, setTab] = useState<Tab>(() => tabFrom(search.get('tab')));
+  const [tab, setTab] = useState<Tab>(() => tabFrom(search.get('tab'), tabs));
   const swaps = useSwaps(market.token, tab === 'trades');
   const [holdersLimit, setHoldersLimit] = useState(FETCH);
   const holders = useHolders(market.token, tab === 'holders', holdersLimit);
@@ -98,18 +121,18 @@ export function TokenRecords({ market, launch, profile, links, fees, trades }: {
   // Paging past what is loaded pulls the next batch first, so the reader never sees a short page.
   const nextTradePage = async () => {
     if (loadingMore) return;
-    const needed = (tradePage + 2) * PER_PAGE;
+    const needed = (tradePage + 2) * perPage;
     if (allSwaps.length < needed && !exhausted) {
       const got = await fetchOlder();
-      if (got === 0 && allSwaps.length <= (tradePage + 1) * PER_PAGE) return;
+      if (got === 0 && allSwaps.length <= (tradePage + 1) * perPage) return;
     }
     setTradePage((p) => p + 1);
   };
 
-  const tradeRows = allSwaps.slice(tradePage * PER_PAGE, (tradePage + 1) * PER_PAGE);
-  const moreTrades = allSwaps.length > (tradePage + 1) * PER_PAGE || !exhausted;
+  const tradeRows = allSwaps.slice(tradePage * perPage, (tradePage + 1) * perPage);
+  const moreTrades = allSwaps.length > (tradePage + 1) * perPage || !exhausted;
   const loadedHolders = holders.data?.holders ?? [];
-  const holderRows = loadedHolders.slice(holderPage * PER_PAGE, (holderPage + 1) * PER_PAGE);
+  const holderRows = loadedHolders.slice(holderPage * perPage, (holderPage + 1) * perPage);
   // We hold `holdersLimit` rows; more exist if the fetch came back full and we have not raised the cap.
   const loadedHoldersCapped = loadedHolders.length >= holdersLimit && holdersLimit < HOLDERS_MAX;
 
@@ -127,12 +150,14 @@ export function TokenRecords({ market, launch, profile, links, fees, trades }: {
           else url.searchParams.set('tab', next);
           window.history.replaceState(null, '', url);
         }}
-        tabs={[
-          { id: 'trades', label: trades === undefined ? 'Trades' : `Trades · ${formatNumber(trades, 0)}` },
-          { id: 'holders', label: `Holders · ${formatNumber(market.holders, 0)}` },
-          { id: 'fees', label: 'Fees & pool' },
-          { id: 'details', label: 'Details' },
-        ]}
+        tabs={(
+          [
+            { id: 'trades', label: trades === undefined ? 'Trades' : `Trades · ${formatNumber(trades, 0)}` },
+            { id: 'holders', label: `Holders · ${formatNumber(market.holders, 0)}` },
+            { id: 'fees', label: 'Fees & pool' },
+            { id: 'details', label: 'Details' },
+          ] as const
+        ).filter((t) => tabs.includes(t.id))}
       />
 
       {tab === 'trades' &&
@@ -185,8 +210,8 @@ export function TokenRecords({ market, launch, profile, links, fees, trades }: {
             ))}
             <Pager
               page={tradePage}
-              from={tradePage * PER_PAGE + 1}
-              to={tradePage * PER_PAGE + tradeRows.length}
+              from={tradePage * perPage + 1}
+              to={tradePage * perPage + tradeRows.length}
               total={trades}
               busy={loadingMore}
               hasNext={moreTrades}
@@ -246,11 +271,11 @@ export function TokenRecords({ market, launch, profile, links, fees, trades }: {
             ))}
             <Pager
               page={holderPage}
-              from={holderPage * PER_PAGE + 1}
-              to={holderPage * PER_PAGE + holderRows.length}
+              from={holderPage * perPage + 1}
+              to={holderPage * perPage + holderRows.length}
               total={market.holders}
               busy={holders.isFetching}
-              hasNext={(holders.data?.holders.length ?? 0) > (holderPage + 1) * PER_PAGE || loadedHoldersCapped}
+              hasNext={(holders.data?.holders.length ?? 0) > (holderPage + 1) * perPage || loadedHoldersCapped}
               onPrev={() => setHolderPage((p) => Math.max(0, p - 1))}
               onNext={() => {
                 // Near the end of what was fetched, widen the request before stepping on.

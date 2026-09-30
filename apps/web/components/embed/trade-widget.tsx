@@ -4,9 +4,12 @@ import { ArrowUpRight } from 'lucide-react';
 
 import { PairBadge } from '@/components/markets/market-rows';
 import { TokenLogo } from '@/components/stock/stock-coin';
+import { ChartModule } from '@/components/token/chart-module';
+import { TokenRecords } from '@/components/token/token-records';
 import { TradePanel } from '@/components/trade/trade-panel';
 import { Banner, PriceChange, TxLink } from '@/components/ui/display';
 import { Module, Skeleton } from '@/components/ui/primitives';
+import type { EmbedModule } from '@/lib/embed';
 import { publicEnv } from '@/lib/env';
 import { formatUsd } from '@/lib/format';
 import { useToken } from '@/lib/queries';
@@ -19,30 +22,60 @@ import { postToHost } from './embed-shell';
 /**
  * The trade widget: one token's buy / sell panel. It follows a launch through the same states as
  * the token page (submitted, live but not indexed, indexed) and keeps the panel mounted across them.
+ *
+ * `show` adds the token page's own chart above the panel and its trades and holders lists below
+ * it. Both are built from indexed rows, so a launch that is live but not indexed yet gets them as
+ * soon as the indexer stores it, without a reload.
  */
-export function TradeWidget({ address, initialData, initialSide = 'buy' }: { address: string; initialData: TokenResponse; initialSide?: 'buy' | 'sell' }) {
+export function TradeWidget({
+  address,
+  initialData,
+  initialSide = 'buy',
+  show = [],
+}: {
+  address: string;
+  initialData: TokenResponse;
+  initialSide?: 'buy' | 'sell';
+  show?: readonly EmbedModule[];
+}) {
   const { data } = useToken(address, initialData);
   const view = data ?? initialData;
   const market = tradeMarketOf(view);
   const hidden = useEmbedHidden();
+  const indexed = view.status === 'indexed' ? view.market : null;
+  const tabs = (['trades', 'holders'] as const).filter((tab) => show.includes(tab));
+  const waiting = (show.includes('chart') || tabs.length > 0) && !indexed && view.status !== 'pending';
 
   return (
-    <Module ticks>
-      {!hidden('header') && <WidgetHeader view={view} pageUrl={`${publicEnv.appUrl}/token/${address}`} />}
-      {view.status === 'pending' ? (
-        <div className="p-4 flex flex-col gap-3">
-          <p className="text-[13px] text-ink-secondary">The launch transaction is in flight. Trading opens here by itself as soon as the block lands.</p>
-          {view.txHash && <TxLink hash={view.txHash}>Launch transaction</TxLink>}
-          <Skeleton className="h-40" />
-        </div>
-      ) : market ? (
-        <TradePanel market={market} initialSide={initialSide} onTraded={({ txHash, side }) => postToHost({ type: 'swap', token: address, side, txHash })} />
-      ) : (
-        <div className="p-4">
-          <Banner tone="warning">This stock is not configured for trading on this site yet.</Banner>
-        </div>
+    <div className="flex flex-col gap-3">
+      <Module ticks>
+        {!hidden('header') && <WidgetHeader view={view} pageUrl={`${publicEnv.appUrl}/token/${address}`} />}
+        {show.includes('chart') && indexed && (
+          <div className="border-b border-line">
+            <ChartModule token={indexed.token} poolId={indexed.poolId} stockSymbol={indexed.stock.symbol} />
+          </div>
+        )}
+        {view.status === 'pending' ? (
+          <div className="p-4 flex flex-col gap-3">
+            <p className="text-[13px] text-ink-secondary">The launch transaction is in flight. Trading opens here by itself as soon as the block lands.</p>
+            {view.txHash && <TxLink hash={view.txHash}>Launch transaction</TxLink>}
+            <Skeleton className="h-40" />
+          </div>
+        ) : market ? (
+          <TradePanel market={market} initialSide={initialSide} onTraded={({ txHash, side }) => postToHost({ type: 'swap', token: address, side, txHash })} />
+        ) : (
+          <div className="p-4">
+            <Banner tone="warning">This stock is not configured for trading on this site yet.</Banner>
+          </div>
+        )}
+      </Module>
+      {tabs.length > 0 && indexed && (
+        <Module>
+          <TokenRecords market={indexed} tabs={tabs} perPage={10} trades={view.status === 'indexed' ? view.details?.lifetime.trades : undefined} />
+        </Module>
       )}
-    </Module>
+      {waiting && <p className="px-1 text-[12px] text-ink-muted">The chart and the lists appear once the launch is indexed, a few blocks after it lands.</p>}
+    </div>
   );
 }
 

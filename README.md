@@ -175,19 +175,26 @@ database round trip per window.
   contractURI; with `token`, the name and symbol come from that token's launch record
 - `GET /api/health`
 - `GET /api/launch-config` (newest factory, hook and router, builder code, deadline, form limits, page URLs)
+- `POST /api/tx/swap` `{ token, side, amountIn, account, recipient?, slippageBps?, builderCode? }` and
+  `POST /api/tx/launch` `{ account, name, symbol, contractURI, stock, metadataEditable?, salt?, buy?, builderCode? }`
+  -> the approve (when the allowance is short) and swap or launch calls for that account, built by the same code as
+  the site, with the quote, minimum output, deadline, predicted token and an `eth_call` simulation. Nothing is signed
+  or sent; `builderCode` adds the caller's ERC-8021 code beside the site's
 - `GET|POST /api/region` (the caller's country and whether quotes and pins wait for the eligibility answer;
   POST `{ confirm }` records the answer as a 30-day cookie, same-origin only). `x-bstocks-eligibility: confirmed`
   carries the same answer as a header
 
-Listed partner origins (`PARTNER_ORIGINS`, zkCodex by default) may call launch-config, stocks, markets, region
-and health, and post metadata, from the visitor's browser. Everything else stays same-origin.
+Listed partner origins (`PARTNER_ORIGINS`, zkCodex by default) may read launch-config, stocks, markets, activity,
+region, health, one token with its trades, candles and holders, and a wallet, and post metadata, quotes and the
+transaction builders, from the visitor's browser. Everything else stays same-origin. Quotes, transaction builds,
+token reads and wallet reads carry a per-caller limit a minute (`API_LIMITS` in `apps/web/lib/rate-limit.server.ts`).
 
 ## Widgets
 
 `/embed/trade/:token` and `/embed/create` are the trade panel and the create form as pages any site can put in
 an iframe (`frame-ancestors *`); every other page sends `X-Frame-Options: DENY`. `/widgets` builds the snippet
-with a live preview. Query options: `side`, `stock`, `theme`, `eligibility=always`, `accent=<hex>` and
-`hide=<sections>`. The widget posts `ready`, `resize`, `swap` and `launch` messages to its host with
+with a live preview. Query options: `side`, `show=chart,trades,holders` (trade), `stock`, `picker=select` (create),
+`theme`, `eligibility=always`, `accent=<hex>` and `hide=<sections>`; `hide=stocks` with a `stock` fixes the stock. The widget posts `ready`, `resize`, `swap` and `launch` messages to its host with
 `source: 'bstocks-launchpad'`; nothing identifying the visitor leaves the frame. See `/docs#widgets`.
 
 ## Notes

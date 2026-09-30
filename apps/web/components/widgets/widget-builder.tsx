@@ -1,21 +1,24 @@
 'use client';
 
-import { Check, Copy } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { Input, Segmented, Tabs } from '@/components/ui/controls';
 import { Chip, KeyValue, Module, ModuleHeader } from '@/components/ui/primitives';
 import {
-  EMBED_HEIGHT,
+  EMBED_MODULE_LABELS,
+  EMBED_MODULES,
   EMBED_SECTION_LABELS,
   EMBED_SECTIONS,
   contrastRatio,
+  embedHeight,
   embedPath,
   embedResizeScript,
   embedSnippet,
   parseEmbedAccent,
   type EmbedEligibility,
+  type EmbedModule,
   type EmbedOptions,
+  type EmbedPicker,
   type EmbedSection,
   type EmbedTheme,
   type EmbedWidget,
@@ -24,6 +27,8 @@ import {
 import { publicEnv } from '@/lib/env';
 import { useStocks } from '@/lib/queries';
 import type { StocksResponse } from '@/lib/types';
+
+import { CodeBlock } from './code-block';
 
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/u;
 /** The site's own primary, what the colour picker starts from. */
@@ -48,6 +53,9 @@ export function WidgetBuilder({ initialToken, initialStocks }: { initialToken?: 
   const [theme, setTheme] = useState<EmbedTheme>('auto');
   const [eligibility, setEligibility] = useState<EmbedEligibility>('region');
   const [hide, setHide] = useState<EmbedSection[]>([]);
+  const [show, setShow] = useState<EmbedModule[]>([]);
+  const [picker, setPicker] = useState<EmbedPicker>('grid');
+  const toggleShow = (module: EmbedModule) => setShow((current) => (current.includes(module) ? current.filter((m) => m !== module) : [...current, module]));
   const [accentText, setAccentText] = useState('');
   const accentDraft = parseEmbedAccent(accentText);
   const accent = useSettled(accentDraft);
@@ -58,7 +66,12 @@ export function WidgetBuilder({ initialToken, initialStocks }: { initialToken?: 
 
   const tokenValid = ADDRESS.test(token.trim());
   const options: EmbedOptions | null =
-    widget === 'trade' ? (tokenValid ? { widget, token: token.trim(), side, theme, eligibility, hide, accent } : null) : { widget, ...(stock ? { stock } : {}), theme, eligibility, hide, accent };
+    widget === 'trade'
+      ? tokenValid
+        ? { widget, token: token.trim(), side, show, theme, eligibility, hide, accent }
+        : null
+      : { widget, ...(stock ? { stock } : {}), picker, theme, eligibility, hide, accent };
+  const height = embedHeight({ widget, show });
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_480px] gap-5 items-start">
@@ -98,6 +111,17 @@ export function WidgetBuilder({ initialToken, initialStocks }: { initialToken?: 
                     ]}
                   />
                 </div>
+                <div className="flex flex-col gap-1.5">
+                  <span className="text-[12px] text-ink-secondary">Also show</span>
+                  <div className="flex flex-wrap gap-1.5" role="group" aria-label="Parts to add under the trade panel">
+                    {EMBED_MODULES.map((module) => (
+                      <Chip key={module} active={show.includes(module)} aria-pressed={show.includes(module)} onClick={() => toggleShow(module)}>
+                        {EMBED_MODULE_LABELS[module]}
+                      </Chip>
+                    ))}
+                  </div>
+                  <p className="text-[12px] text-ink-muted">The chart sits above the panel; trades and holders share one list below it, ten rows a page.</p>
+                </div>
               </>
             ) : (
               <>
@@ -114,6 +138,24 @@ export function WidgetBuilder({ initialToken, initialStocks }: { initialToken?: 
                       </Chip>
                     ))}
                   </div>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <span className="text-[12px] text-ink-secondary">Stock picker</span>
+                  <Segmented<EmbedPicker>
+                    ariaLabel="How the widget offers the stocks"
+                    size="sm"
+                    value={picker}
+                    onChange={setPicker}
+                    options={[
+                      { value: 'grid', label: 'Tiles' },
+                      { value: 'select', label: 'Dropdown' },
+                    ]}
+                  />
+                  <p className="text-[12px] text-ink-muted">
+                    {stock
+                      ? 'To offer only this stock, hide the stock picker under Style: the form then shows it as fixed.'
+                      : 'The dropdown takes one row instead of a grid of tiles. Pick a stock above to be able to fix it.'}
+                  </p>
                 </div>
               </>
             )}
@@ -187,15 +229,26 @@ export function WidgetBuilder({ initialToken, initialStocks }: { initialToken?: 
             <div className="flex flex-col gap-1.5">
               <span className="text-[12px] text-ink-secondary">Hide</span>
               <div className="flex flex-wrap gap-1.5" role="group" aria-label="Sections to hide">
-                {sections.map((section) => (
-                  <Chip key={section} active={hide.includes(section)} aria-pressed={hide.includes(section)} onClick={() => toggleHide(section)}>
-                    {EMBED_SECTION_LABELS[section]}
-                  </Chip>
-                ))}
+                {sections.map((section) => {
+                  // Hiding the picker fixes the chosen stock, so it needs one.
+                  const needsStock = section === 'stocks' && !stock;
+                  return (
+                    <Chip
+                      key={section}
+                      active={hide.includes(section) && !needsStock}
+                      aria-pressed={hide.includes(section) && !needsStock}
+                      disabled={needsStock}
+                      title={needsStock ? 'Pick the stock it opens with first' : undefined}
+                      onClick={() => toggleHide(section)}
+                    >
+                      {EMBED_SECTION_LABELS[section]}
+                    </Chip>
+                  );
+                })}
               </div>
               <p className="text-[12px] text-ink-muted">
                 {widget === 'create'
-                  ? 'A hidden option keeps its default: no buy at launch, a profile fixed onchain, no website or socials. The price, the fee, the review step and the eligibility question always stay.'
+                  ? 'A hidden option keeps its default: no buy at launch, a profile fixed onchain, no website or socials, and a hidden stock picker leaves the chosen stock fixed. The price, the fee, the review step and the eligibility question always stay.'
                   : 'The price, the fee, the minimum received, the review step and the eligibility question always stay.'}
               </p>
             </div>
@@ -208,7 +261,7 @@ export function WidgetBuilder({ initialToken, initialStocks }: { initialToken?: 
             {options ? <CodeBlock label="Paste into your page" code={embedSnippet(publicEnv.appUrl, options)} /> : <p className="text-[13px] text-ink-muted">Enter a token address to get the code.</p>}
             <CodeBlock label="Optional · fit the frame to the widget" code={embedResizeScript(publicEnv.appUrl)} />
             <p className="text-[12px] text-ink-muted">
-              Without the script the frame keeps the height in the code ({EMBED_HEIGHT[widget]}px) and scrolls inside when the widget grows. Leave the iframe unsandboxed: wallets open popups and browser wallets inject into the frame.
+              Without the script the frame keeps the height in the code ({height}px) and scrolls inside when the widget grows. Leave the iframe unsandboxed: wallets open popups and browser wallets inject into the frame.
             </p>
           </div>
         </Module>
@@ -241,7 +294,7 @@ export function WidgetBuilder({ initialToken, initialStocks }: { initialToken?: 
               src={embedPath(options)}
               title={widget === 'trade' ? 'Trade widget preview' : 'Create widget preview'}
               className="block w-full border-0 rounded-[8px] bg-canvas"
-              style={{ height: EMBED_HEIGHT[widget] }}
+              style={{ height }}
               allow="clipboard-write"
             />
           ) : (
@@ -260,31 +313,4 @@ function AccentContrast({ accent }: { accent: string }) {
   const weak = [onLight < 3 && 'light', onDark < 3 && 'dark'].filter(Boolean);
   if (weak.length === 0) return null;
   return <p className="text-[12px] text-warning-fg">Hard to read as text on {weak.join(' and ')} backgrounds (contrast {Math.min(onLight, onDark).toFixed(1)}:1, 3:1 or more reads well).</p>;
-}
-
-function CodeBlock({ label, code }: { label: string; code: string }) {
-  const [copied, setCopied] = useState(false);
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(code);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
-    } catch {
-      /* clipboard unavailable */
-    }
-  };
-  return (
-    <div className="border border-line rounded-[6px] overflow-hidden">
-      <div className="flex items-center justify-between gap-2 h-9 px-3 border-b border-line bg-surface">
-        <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-ink-muted">{label}</span>
-        <button type="button" onClick={copy} className="inline-flex items-center gap-1.5 h-7 px-2 rounded-[6px] text-[12px] text-ink-secondary hover:text-ink transition-fast">
-          {copied ? <Check size={13} strokeWidth={1.75} /> : <Copy size={13} strokeWidth={1.75} />}
-          {copied ? 'Copied' : 'Copy'}
-        </button>
-      </div>
-      <pre className="p-3 overflow-x-auto text-[12px] leading-relaxed font-mono text-ink">
-        <code>{code}</code>
-      </pre>
-    </div>
-  );
 }

@@ -30,6 +30,20 @@ export function getBuilderDataSuffix(): Hex | null {
   return cachedSuffix;
 }
 
+/** A builder code as the suffix can carry it: codes are joined with commas, so none may contain one. */
+export const BUILDER_CODE = /^[A-Za-z0-9_-]{2,32}$/u;
+
+/**
+ * This site's code plus another app's, for a transaction that app builds through the API: both show
+ * up as attributed in one ERC-8021 suffix. A code that is not a valid one is left out, never escaped.
+ */
+export function partnerDataSuffix(partnerCode?: string | null): Hex | null {
+  const codes = [publicEnv.builderCode.trim(), partnerCode?.trim() ?? '']
+    .filter((code) => BUILDER_CODE.test(code))
+    .filter((code, i, all) => all.indexOf(code) === i);
+  return codes.length > 0 ? Attribution.toDataSuffix({ codes }) : null;
+}
+
 /** The suffix in the shape viem's writeContract/sendTransaction takes, or undefined when unset. */
 export function builderDataSuffix(): Hex | undefined {
   return getBuilderDataSuffix() ?? undefined;

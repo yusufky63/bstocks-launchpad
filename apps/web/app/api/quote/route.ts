@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { error, json, parseAddressParam } from '@/lib/api.server';
 import { getDb } from '@/lib/db.server';
 import { QuoteError, quoteExactIn } from '@/lib/quote.server';
+import { limitCaller } from '@/lib/rate-limit.server';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,6 +14,8 @@ const bodySchema = z.object({
 });
 
 export async function POST(request: Request): Promise<Response> {
+  const limited = limitCaller(request, 'quote');
+  if (limited) return limited;
   let body: unknown;
   try {
     body = await request.json();

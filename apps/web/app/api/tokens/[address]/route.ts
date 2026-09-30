@@ -2,6 +2,7 @@ import { findStock } from '@stockpair/core';
 
 import { error, json, parseAddressParam } from '@/lib/api.server';
 import { cached } from '@/lib/cache.server';
+import { limitCaller } from '@/lib/rate-limit.server';
 import { getDb } from '@/lib/db.server';
 import { readLaunchOnchain } from '@/lib/onchain.server';
 import { readTokenCached, readTokenDetails } from '@/lib/token.server';
@@ -15,7 +16,9 @@ type Context = { params: Promise<{ address: string }> };
  * launch (its deployment and the creator's buy at launch) and where the profile stands onchain;
  * `indexing` means the launch is confirmed onchain but not yet stored; 404 means no such launch.
  */
-export async function GET(_request: Request, { params }: Context): Promise<Response> {
+export async function GET(request: Request, { params }: Context): Promise<Response> {
+  const limited = limitCaller(request, 'token');
+  if (limited) return limited;
   const { address } = await params;
   const token = parseAddressParam(address);
   if (!token) return error(400, 'INVALID_ADDRESS', 'Token address is malformed.');

@@ -21,17 +21,19 @@ import { ELIGIBILITY_HEADER, regionState } from '@/lib/region'
  * blocked, so local development is unaffected.
  */
 
-/** Quotes build a swap; metadata pinning is the first step of opening a market. */
-const RESTRICTED_WRITES = [/^\/api\/quote/, /^\/api\/metadata/]
+/** Quotes and the transaction builders build a swap or a launch; metadata pinning is the first step of opening a market. */
+const RESTRICTED_WRITES = [/^\/api\/quote/, /^\/api\/metadata/, /^\/api\/tx\//]
 
 /**
  * Partner sites that run the launch flow in their own UI (zkCodex) call this API from the
  * visitor's browser. It has to be the browser, not a partner server: the geoblock above and the
  * pin rate limit both key on the visitor's own connection, and a server in a blocked country would
  * be refused for everyone. Every route here is public and cookie-less, so the list only states who
- * the API is meant for. Partners get exactly what a launch needs: the launch config, the stocks,
- * the market lists and the region to read, and the metadata pin to write. Quotes, wallets and
- * token detail stay closed to them until those routes have partner limits of their own.
+ * the API is meant for. Partners read what a launch and a trade need (the launch config, stocks,
+ * markets, activity, one token with its trades, candles and holders, a wallet, the region) and
+ * post the metadata pin, quotes and the transaction builders. Each of the routes that used to stay
+ * closed to them (quotes, wallets, token detail) now has a per-caller limit of its own
+ * (lib/rate-limit.server.ts), on top of the memoised reads behind it.
  *
  * `PARTNER_ORIGINS` replaces the default list. zkCodex's own Vercel previews (its staging branch
  * among them) are allowed by pattern: only that team can create hosts under the suffix.
@@ -41,8 +43,12 @@ const PARTNER_ORIGINS = (process.env.PARTNER_ORIGINS ?? 'https://zkcodex.com,htt
   .map((o) => o.trim().replace(/\/+$/u, ''))
   .filter(Boolean)
 const PARTNER_PREVIEW = /^https:\/\/zk-codex-[a-z0-9-]+-yusufky63s-projects\.vercel\.app$/u
-const PARTNER_READS = [/^\/api\/(?:launch-config|stocks|markets|region|health)\/?$/]
-const PARTNER_WRITES = [/^\/api\/metadata\/?$/]
+const PARTNER_READS = [
+  /^\/api\/(?:launch-config|stocks|markets|region|health|activity)\/?$/,
+  /^\/api\/tokens\/0x[0-9a-fA-F]{40}(?:\/(?:swaps|candles|holders))?\/?$/,
+  /^\/api\/wallet\/0x[0-9a-fA-F]{40}\/?$/,
+]
+const PARTNER_WRITES = [/^\/api\/(?:metadata|quote|tx\/swap|tx\/launch)\/?$/]
 
 function partnerOrigin(req: NextRequest): string | null {
   const origin = req.headers.get('origin')

@@ -5,6 +5,7 @@ import { holderConcentration, listHolders, readMarket } from '@stockpair/core/db
 
 import { error, json, limitSchema, parseAddressParam } from '@/lib/api.server';
 import { getDb } from '@/lib/db.server';
+import { limitCaller } from '@/lib/rate-limit.server';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,6 +14,8 @@ type Context = { params: Promise<{ address: string }> };
 const SUPPLY = 1_000_000_000n * 10n ** 18n;
 
 export async function GET(request: Request, { params }: Context): Promise<Response> {
+  const limited = limitCaller(request, 'token');
+  if (limited) return limited;
   const { address } = await params;
   const token = parseAddressParam(address);
   if (!token) return error(400, 'INVALID_ADDRESS', 'Token address is malformed.');

@@ -24,8 +24,8 @@ import {
   quoteDevBuy,
   randomSalt,
   stockInForShare,
-  useLaunchSalt,
 } from '@/lib/launch';
+import { useLaunchSalt } from '@/lib/launch-salt';
 import { executeLaunch, pinOnce, type LaunchPlan, type LaunchState } from '@/lib/launch-exec';
 
 const STOCK = BASE_STOCKS[0]!.address as Address; // NVDAc, 0xb200…

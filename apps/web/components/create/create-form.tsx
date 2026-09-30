@@ -31,8 +31,8 @@ import {
   pausedReason,
   quoteDevBuy,
   stockInForShare,
-  useLaunchSalt,
 } from '@/lib/launch';
+import { useLaunchSalt } from '@/lib/launch-salt';
 import { normalizeTelegram } from '@/lib/profile';
 import { useStocks } from '@/lib/queries';
 import { normalizeTwitter } from '@/lib/twitter';
@@ -83,11 +83,21 @@ export function CreateForm({
   initialStocks,
   onLaunched,
   compact = false,
+  stockPicker = 'grid',
+  lockedStock = null,
 }: {
   initialStocks?: StocksResponse;
   onLaunched?: (launch: { token: Address; txHash: Hash }) => void;
   /** One column at every width: a widget is as narrow as its frame, whatever the viewport says. */
   compact?: boolean;
+  /** The site's tiles, or one dropdown where space is short (a widget's `?picker=select`). */
+  stockPicker?: 'grid' | 'select';
+  /**
+   * The only stock offered: a widget host that fixed it. Passed from the server rather than read
+   * from the URL here, so the page renders the fixed row from the first paint. Ignored when it is
+   * not an enabled stock, which brings the picker back.
+   */
+  lockedStock?: string | null;
 }) {
   const router = useRouter();
   const { address, isConnected, chainId } = useAccount();
@@ -134,7 +144,8 @@ export function CreateForm({
     () => (prefill.stock ? (stocks.find((s) => s.address.toLowerCase() === prefill.stock)?.address ?? null) : null),
     [stocks, prefill.stock],
   );
-  const stock = stockState ?? prefillStock;
+  const fixedStock = lockedStock ? (stocks.find((s) => s.address.toLowerCase() === lockedStock.toLowerCase()) ?? null) : null;
+  const stock = fixedStock?.address ?? stockState ?? prefillStock;
   const selected = stocks.find((s) => s.address === stock) ?? null;
   const onBase = isConnected && !!address && chainId === base.id;
   const eligibility = useEligibility();
@@ -374,35 +385,71 @@ export function CreateForm({
         </Module>
 
         <Module ticks>
-          <ModuleHeader index="02" title="Paired stock" action={<span className="font-mono text-[11px] text-ink-muted">{stocks.length} available</span>} />
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-px bg-line" role="radiogroup" aria-label="Paired stock">
-            {stocks.map((s) => {
-              const active = stock === s.address;
-              return (
-                <button
-                  key={s.address}
-                  type="button"
-                  role="radio"
-                  aria-checked={active}
-                  onClick={() => {
-                    setStock(s.address);
-                    setShareAck(false);
-                  }}
-                  className={cx('rail flex items-center gap-3 px-4 py-3 text-left transition-fast bg-canvas hover:bg-surface min-h-[72px]', active && 'bg-primary-soft hover:bg-primary-soft')}
-                >
-                  <StockCoin ticker={s.ticker} size={36} tilt={false} />
-                  <span className="min-w-0">
-                    <span className={cx('block font-medium text-[15px] leading-tight', active && 'text-primary')}>{s.symbol}</span>
-                    <span className="block text-[12px] text-ink-secondary truncate">{s.name}</span>
-                    <span className="block font-mono num text-[11px] text-ink-muted">
-                      {formatUsd(s.priceUsd)}
-                      {s.feedStatus === 'holding' ? ' · last close' : ''} · {s.launches} paired
+          <ModuleHeader index="02" title="Paired stock" action={fixedStock ? undefined : <span className="font-mono text-[11px] text-ink-muted">{stocks.length} available</span>} />
+          {fixedStock ? (
+            <div className="flex items-center gap-3 px-4 py-3">
+              <StockCoin ticker={fixedStock.ticker} size={36} tilt={false} />
+              <span className="min-w-0">
+                <span className="block font-medium text-[15px] leading-tight">{fixedStock.symbol}</span>
+                <span className="block text-[12px] text-ink-secondary truncate">{fixedStock.name}</span>
+                <span className="block font-mono num text-[11px] text-ink-muted">
+                  {formatUsd(fixedStock.priceUsd)}
+                  {fixedStock.feedStatus === 'holding' ? ' · last close' : ''} · your token trades against it
+                </span>
+              </span>
+            </div>
+          ) : stockPicker === 'select' ? (
+            <div className="flex items-center gap-3 p-4">
+              {selected && <StockCoin ticker={selected.ticker} size={36} tilt={false} />}
+              <select
+                aria-label="Paired stock"
+                value={stock ?? ''}
+                onChange={(e) => {
+                  setStock(e.target.value || null);
+                  setShareAck(false);
+                }}
+                className="h-12 min-w-0 flex-1 rounded-[6px] border border-line-strong bg-canvas px-3 text-[15px] text-ink outline-none transition-fast focus:border-primary"
+              >
+                <option value="" disabled>
+                  Choose the stock it trades against
+                </option>
+                {stocks.map((s) => (
+                  <option key={s.address} value={s.address}>
+                    {s.symbol} · {s.name} · {formatUsd(s.priceUsd)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-px bg-line" role="radiogroup" aria-label="Paired stock">
+              {stocks.map((s) => {
+                const active = stock === s.address;
+                return (
+                  <button
+                    key={s.address}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    onClick={() => {
+                      setStock(s.address);
+                      setShareAck(false);
+                    }}
+                    className={cx('rail flex items-center gap-3 px-4 py-3 text-left transition-fast bg-canvas hover:bg-surface min-h-[72px]', active && 'bg-primary-soft hover:bg-primary-soft')}
+                  >
+                    <StockCoin ticker={s.ticker} size={36} tilt={false} />
+                    <span className="min-w-0">
+                      <span className={cx('block font-medium text-[15px] leading-tight', active && 'text-primary')}>{s.symbol}</span>
+                      <span className="block text-[12px] text-ink-secondary truncate">{s.name}</span>
+                      <span className="block font-mono num text-[11px] text-ink-muted">
+                        {formatUsd(s.priceUsd)}
+                        {s.feedStatus === 'holding' ? ' · last close' : ''} · {s.launches} paired
+                      </span>
                     </span>
-                  </span>
-                </button>
-              );
-            })}
-          </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
           {errors.stock && <p className="px-4 py-2 text-[13px] text-danger-fg border-t border-line">{errors.stock}</p>}
         </Module>
 
