@@ -35,10 +35,10 @@ const RESTRICTED_WRITES = [/^\/api\/quote/, /^\/api\/metadata/, /^\/api\/tx\//]
  * closed to them (quotes, wallets, token detail) now has a per-caller limit of its own
  * (lib/rate-limit.server.ts), on top of the memoised reads behind it.
  *
- * `PARTNER_ORIGINS` replaces the default list. zkCodex's own Vercel previews (its staging branch
- * among them) are allowed by pattern: only that team can create hosts under the suffix.
+ * `PARTNER_ORIGINS` replaces the default list. beta.zkcodex.com is zkCodex's staging site; its Vercel
+ * previews are allowed by pattern: only that team can create hosts under the suffix.
  */
-const PARTNER_ORIGINS = (process.env.PARTNER_ORIGINS ?? 'https://zkcodex.com,https://www.zkcodex.com,http://localhost:3001')
+const PARTNER_ORIGINS = (process.env.PARTNER_ORIGINS ?? 'https://zkcodex.com,https://www.zkcodex.com,https://beta.zkcodex.com,http://localhost:3001')
   .split(',')
   .map((o) => o.trim().replace(/\/+$/u, ''))
   .filter(Boolean)

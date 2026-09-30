@@ -62,6 +62,8 @@ describe('partner CORS', () => {
 
   it('allows zkCodex previews by pattern and nobody else', () => {
     expect(proxy(request('/api/stocks', { origin: STAGING })).headers.get('access-control-allow-origin')).toBe(STAGING);
+    expect(proxy(request('/api/stocks', { origin: 'https://beta.zkcodex.com' })).headers.get('access-control-allow-origin')).toBe('https://beta.zkcodex.com');
+    expect(proxy(request('/api/stocks', { origin: 'https://beta.zkcodex.com.evil.example' })).headers.get('access-control-allow-origin')).toBeNull();
     expect(proxy(request('/api/stocks', { origin: 'https://zk-codex-x-someone-else.vercel.app' })).headers.get('access-control-allow-origin')).toBeNull();
     expect(proxy(request('/api/stocks', { origin: 'https://evil.example' })).headers.get('access-control-allow-origin')).toBeNull();
     expect(proxy(request('/api/stocks')).headers.get('access-control-allow-origin')).toBeNull();
