@@ -4,8 +4,6 @@ import { LinkButton, PageTitle } from '@/components/ui/primitives';
 import { ApiGuide } from '@/components/widgets/api-guide';
 import { WidgetBuilder } from '@/components/widgets/widget-builder';
 import { parseAddressParam } from '@/lib/api.server';
-import { publicEnv } from '@/lib/env';
-import { API_LIMITS } from '@/lib/rate-limit.server';
 import { readStocksResponse } from '@/lib/stocks.server';
 
 export const dynamic = 'force-dynamic';
@@ -29,7 +27,7 @@ export default async function WidgetsPage({ searchParams }: Props) {
         action={<LinkButton href="#api">Use the API</LinkButton>}
       />
       <WidgetBuilder initialToken={initialToken} initialStocks={stocks ?? undefined} />
-      <ApiGuide appUrl={publicEnv.appUrl} limits={API_LIMITS} />
+      <ApiGuide />
     </div>
   );
 }

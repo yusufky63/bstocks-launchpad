@@ -1,5 +1,4 @@
-import { readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import { stockPairFactoryAbi, stockPairHookAbi, stockPairRouterAbi } from '@stockpair/core';
@@ -215,19 +214,11 @@ describe('docs cover what the app serves', () => {
   const howItWorks = read('../app/how-it-works/page.tsx');
   const readme = read('../../../README.md').replace(/\s+/gu, ' ');
 
-  /** Every route.ts under app/api, as the docs write it: `/api/tokens/:address/swaps`. */
-  function apiRoutes(dir = fileURLToPath(new URL('../app/api', import.meta.url)), prefix = '/api'): string[] {
-    return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-      if (entry.isFile()) return entry.name === 'route.ts' ? [prefix] : [];
-      const segment = entry.name.replace(/^\[(.+)\]$/u, ':$1');
-      return apiRoutes(join(dir, entry.name), `${prefix}/${segment}`);
-    });
-  }
-
-  it('documents every API route', () => {
-    const routes = apiRoutes();
-    expect(routes.length).toBeGreaterThan(15);
-    for (const route of routes) expect(docs, route).toMatch(new RegExp(`(?:GET|POST|GET\|POST) ${route.replaceAll('/', '\/')}(?:[" ?]|$)`, 'u'));
+  it('lists every API route, grouped, from the reference the API page and the spec share', () => {
+    // test/api-reference.test.ts checks that list against the route files themselves.
+    expect(docs).toContain('{API_GROUPS.map((group) =>');
+    expect(docs).toContain('endpointsIn(group.id).map((e) =>');
+    expect(docs).toContain('href="/docs/api"');
   });
 
   it('names every option a widget reads, and every section a host may hide', () => {

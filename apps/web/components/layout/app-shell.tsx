@@ -45,6 +45,7 @@ const FOOTER_LINKS = [
   ['/how-it-works', 'How it works'],
   ['/widgets', 'Widgets'],
   ['/docs', 'Docs'],
+  ['/docs/api', 'API'],
 ] as const;
 
 function isActive(path: string, href: string): boolean {

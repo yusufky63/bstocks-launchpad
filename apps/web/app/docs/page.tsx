@@ -6,8 +6,7 @@ import { BASE_CONTRACTS, BASE_STOCKS } from '@stockpair/core';
 
 import { AddressLabel } from '@/components/ui/display';
 import { Badge, KeyValue, LinkButton, Module, ModuleHeader, PageTitle } from '@/components/ui/primitives';
-import { CodeBlock } from '@/components/widgets/code-block';
-import { apiLaunchExample, apiRules, apiSwapExample } from '@/lib/api-guide';
+import { API_GROUPS, endpointsIn } from '@/lib/api-reference';
 import { EMBED_HEIGHT, EMBED_MESSAGE_SOURCE } from '@/lib/embed';
 import { publicEnv } from '@/lib/env';
 import { API_LIMITS } from '@/lib/rate-limit.server';
@@ -263,52 +262,44 @@ export default function DocsPage() {
           </Section>
 
           <Section id="api">
-            <p>Most responses use the indexer&apos;s tables plus live pool reads. A confirmed launch can be quoted and traded directly from its factory and pool before indexing. Missing data is <code>null</code>, never a placeholder. Reads are memoised server-side for 3 to 15 seconds.</p>
-            <div className="border border-line rounded-[6px] px-3 mb-2">
-              <h3 className="eyebrow pt-2 pb-1">Configuration</h3>
-              {apiRules(publicEnv.appUrl).map((rule) => (
-                <KeyValue key={rule.label} k={rule.label} v={rule.text} mono={false} />
-              ))}
-              <KeyValue k="Limits" v={`per caller, a minute: ${API_LIMITS.quote} quotes, ${API_LIMITS.tx} transaction builds, ${API_LIMITS.token} token reads, ${API_LIMITS.wallet} wallet reads`} mono={false} />
+            <p>
+              Every route is public, needs no key and answers JSON; reads come from the indexer and live pool reads, and a confirmed launch can be quoted and traded before it is indexed. Missing data is <code>null</code>, never a placeholder. The transaction routes return the exact calls this site sends, for the user&apos;s own wallet to sign. The full reference, with every parameter, error, a curl line and a live Try it, is on its own page, and the same list is published for tools and AI agents.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <LinkButton href="/docs/api" variant="primary" size="sm">
+                API reference
+              </LinkButton>
+              <LinkButton href="/api/openapi.json" external size="sm">
+                OpenAPI spec
+              </LinkButton>
+              <LinkButton href="/llms-full.txt" external size="sm">
+                llms-full.txt
+              </LinkButton>
             </div>
-            <KeyValue k="GET /api/markets" v="?stock=&q=&creator=&limit=&offset= · list of markets" mono={false} />
-            <KeyValue k="GET /api/stocks" v="the 13 quote stocks with Chainlink price and feed status" mono={false} />
-            <KeyValue k="GET /api/tokens/:address" v="market row, fees, lifetime figures, pool reserves, links, launch.creatorBuy, profile.onchain" mono={false} />
-            <KeyValue k="GET /api/tokens/:address/swaps" v="?limit=&before= · trades with dev flag" mono={false} />
-            <KeyValue k="GET /api/tokens/:address/candles" v="one-minute OHLCV in stock units" mono={false} />
-            <KeyValue k="GET /api/tokens/:address/holders" v="ranked balances with labels" mono={false} />
-            <KeyValue k="GET /api/tokens/:address/dex-paid" v="DEX Screener paid-order status · approved, pending, none or unavailable · cached for five minutes" mono={false} />
-            <KeyValue k="GET /api/tokens/:address/image" v="the token image from our own origin, capped at 5 MB · linked with ?v= and the first 12 hex of the image URI's sha256, so a new image gets a new URL · API responses give it as an absolute URL · cached for good only when the image is ipfs:// and a bare CID" mono={false} />
-            <KeyValue k="GET /api/names" v="?a=0x..,0x.. · Basenames for up to 100 addresses" mono={false} />
-            <KeyValue k="GET|POST /api/tokens/:address/profile" v="creator-signed profile of a fixed-profile token: read, or update with payload + image · 409 for an editable token" mono={false} />
-            <KeyValue k="GET /api/wallet/:address" v="created, holdings, claimable, earnings, trades" mono={false} />
-            <KeyValue k="GET /api/stats" v="platform totals and per-stock fees and volume" mono={false} />
-            <KeyValue k="GET /api/activity" v="?limit=&token=&actor= · launches and swaps feed" mono={false} />
-            <KeyValue k="POST /api/quote" v="{ token, side, amountIn } · exact-in quote from the v4 Quoter, including confirmed launches awaiting indexing" mono={false} />
-            <KeyValue k="POST /api/metadata" v="multipart · pins image and ERC-7572 JSON to IPFS · with token, the name and symbol come from the launch record" mono={false} />
-            <KeyValue k="POST /api/tx/swap" v="{ token, side, amountIn, account, recipient?, slippageBps?, builderCode? } · the approve and swapExactIn calls for that account, with the quote, the minimum output, the deadline and a simulation" mono={false} />
-            <KeyValue k="POST /api/tx/launch" v="{ account, name, symbol, contractURI, stock, metadataEditable?, salt?, buy?: { stockIn, toleranceBps?, acknowledgeShare? }, builderCode? } · the approve and launchWithOptions or launchAndBuy calls, with the predicted token address" mono={false} />
-            <KeyValue k="GET /api/health" v="database, schema version, contracts, launch hooks no configured deployment covers, indexer lag, chain head · ok is false while the schema is behind this build or a launch hook is not configured" mono={false} />
-            <KeyValue k="GET /api/launch-config" v="what a site needs to run a launch in its own UI: chain id, the newest factory, hook and router with their deploy block, the builder code, the deadline, the form limits and this site's page URLs · the creation fee and opening valuation are left out on purpose: read them from the factory right before the wallet opens" mono={false} />
-            <KeyValue k="GET /api/region" v="the caller's country, the mode, and whether quotes and pins are refused until the caller confirms eligibility" mono={false} />
-            <KeyValue k="POST /api/region" v="{ confirm } · the caller's own statement that they are not a US person, kept as a cookie for 30 days · refused from any other site's page" mono={false} />
-            <KeyValue
-              k="x-bstocks-eligibility: confirmed"
-              v="request header · the same statement for a site that asks it in its own UI: sent on /api/quote, /api/metadata, /api/tx and /api/region, it counts as the cookie does. Send it only after the visitor ticked your own 'not a US person' box"
-              mono={false}
-            />
+            {API_GROUPS.map((group) => (
+              <div key={group.id}>
+                <h3 className="eyebrow pt-2 pb-1">{group.title}</h3>
+                {endpointsIn(group.id).map((e) => (
+                  <KeyValue
+                    key={e.id}
+                    k={
+                      <a href={`/docs/api#${e.id}`} className="hover:text-primary">
+                        <code>
+                          {e.method} {e.path}
+                        </code>
+                      </a>
+                    }
+                    v={e.summary}
+                    mono={false}
+                  />
+                ))}
+              </div>
+            ))}
             <p className="pt-2">
-              <strong>Building transactions.</strong> The two <code>/api/tx</code> routes return the calls this site&apos;s own trade panel and create form send, built by the same code, for the <code>account</code> that will send them. Nothing is signed or sent: the caller hands <code>calls</code> to that account&apos;s wallet in order, or as one EIP-5792 batch. An approval is for the exact amount, to the exact contract that spends it, and appears only when the allowance is short; then the final call cannot be simulated yet, and <code>simulation</code> says so. The deadline is ten minutes from the latest block, so a caller whose approval took longer asks again. A launch&apos;s token address depends on the account and the salt; send the same <code>salt</code> to keep it. A buy at launch keeps this site&apos;s limits: 15% of the supply or more needs <code>acknowledgeShare</code> after the creator was shown the share, and half the supply is never built. <code>builderCode</code> adds the caller&apos;s own ERC-8021 code beside this site&apos;s, so the transaction is attributed to both.
-            </p>
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-              <CodeBlock label="A trade" code={apiSwapExample(publicEnv.appUrl)} />
-              <CodeBlock label="A launch" code={apiLaunchExample(publicEnv.appUrl)} />
-            </div>
-            <p>
-              <strong>Limits.</strong> Each caller may make {API_LIMITS.quote} quotes, {API_LIMITS.tx} transaction builds, {API_LIMITS.token} token reads (detail, trades, candles, holders) and {API_LIMITS.wallet} wallet reads a minute; more answer <code>429</code> with <code>retry-after</code>. The count is per server instance, so it bounds a client in a loop rather than guaranteeing a quota.
+              <strong>Building transactions.</strong> <code>POST /api/tx/swap</code> and <code>POST /api/tx/launch</code> return the calls for the <code>account</code> that will send them, built by the same code as this site&apos;s trade panel and create form: an approval for the exact amount when the allowance is short, then the swap or the launch, with the minimum output, a ten-minute deadline and a simulation. A buy at launch keeps this site&apos;s limits (15% of the supply needs <code>acknowledgeShare</code>, half is never built), and <code>builderCode</code> attributes the transaction to the caller beside this site.
             </p>
             <p>
-              <strong>Partner access.</strong> Browsers on listed partner origins (zkCodex and its preview deployments; <code>PARTNER_ORIGINS</code> replaces the list) may read <code>/api/launch-config</code>, <code>/api/stocks</code>, <code>/api/markets</code>, <code>/api/activity</code>, <code>/api/region</code>, <code>/api/health</code>, one token with its trades, candles and holders, and a wallet, and post to <code>/api/metadata</code>, <code>/api/quote</code> and the two <code>/api/tx</code> routes. The calls come from the visitor&apos;s own browser, never a partner server, so the limits and the eligibility rule apply to each visitor rather than to the partner as a whole. A partner&apos;s launch still goes from the visitor&apos;s wallet straight to the factory, so the visitor is the creator. Any site can use the <a href="#widgets" className="text-primary">widgets</a> instead, which need no listing.
+              <strong>Limits and partner access.</strong> Each caller may make {API_LIMITS.quote} quotes, {API_LIMITS.tx} transaction builds, {API_LIMITS.token} token reads and {API_LIMITS.wallet} wallet reads a minute; more answer <code>429</code>. Browsers on listed partner origins (zkCodex by default; <code>PARTNER_ORIGINS</code> replaces the list) may call the routes the reference marks <em>partner CORS</em>, so those limits and the eligibility rule apply to each visitor. Any site can use the <a href="#widgets" className="text-primary">widgets</a> instead, which need no listing.
             </p>
           </Section>
 

@@ -157,6 +157,10 @@ pnpm dev                # http://localhost:3000
 
 ## API
 
+The full reference, with parameters, errors, curl and a live Try it for every route, is at `/docs/api`. The same
+list (`apps/web/lib/api-reference.ts`) is published as OpenAPI 3.1 at `/api/openapi.json` and as plain text for
+language models at `/llms.txt` (index) and `/llms-full.txt` (everything); a test checks it against the route files.
+
 Most responses use the indexer's tables plus live pool reads. A confirmed launch can also be quoted and traded directly from its factory and pool before indexing. Missing data is `null`, never a
 placeholder. Server reads are memoised for 3–15 s (`apps/web/lib/cache.server.ts`) so a burst of visitors costs one
 database round trip per window.
