@@ -30,6 +30,7 @@ const DESKTOP_NAV = [
   { href: '/', label: 'Home' },
   { href: '/markets', label: 'Markets' },
   { href: '/stocks', label: 'Stocks' },
+  { href: '/widgets', label: 'Widgets' },
 ] as const;
 
 /**
@@ -99,7 +100,7 @@ export function AppShell({ children, initialMarkets }: { children: ReactNode; in
                   path.startsWith('/create') ? 'bg-primary-soft text-primary border-primary' : 'bg-primary text-primary-contrast border-primary-strong border-b-black/30 hover:brightness-[1.08]',
                 )}
               >
-                <Plus size={15} strokeWidth={2} /> Create token
+                <Plus size={15} strokeWidth={2} /> Create<span className="hidden lg:inline"> token</span>
               </Link>
               <a
                 href={BSTOCKS_X_URL}
@@ -107,7 +108,8 @@ export function AppShell({ children, initialMarkets }: { children: ReactNode; in
                 rel="noreferrer noopener"
                 aria-label={`@${BSTOCKS_X_HANDLE} on X`}
                 title={`@${BSTOCKS_X_HANDLE} on X`}
-                className="h-9 w-9 inline-flex items-center justify-center rounded-[6px] text-ink-secondary hover:text-ink border border-line hover:border-line-strong transition-fast"
+                // Between md and lg the nav and Create share the row; X and Telegram stay in the footer there.
+                className="h-9 w-9 inline-flex md:hidden lg:inline-flex items-center justify-center rounded-[6px] text-ink-secondary hover:text-ink border border-line hover:border-line-strong transition-fast"
               >
                 <XMark size={14} />
               </a>
@@ -118,7 +120,7 @@ export function AppShell({ children, initialMarkets }: { children: ReactNode; in
                   rel="noreferrer noopener"
                   aria-label="Alerts on Telegram"
                   title="Launch and trade alerts on Telegram"
-                  className="h-9 w-9 inline-flex items-center justify-center rounded-[6px] text-ink-secondary hover:text-ink border border-line hover:border-line-strong transition-fast"
+                  className="h-9 w-9 inline-flex md:hidden lg:inline-flex items-center justify-center rounded-[6px] text-ink-secondary hover:text-ink border border-line hover:border-line-strong transition-fast"
                 >
                   <TelegramMark size={15} />
                 </a>

@@ -164,6 +164,15 @@ describe('widget frame', () => {
     expect(site).toContain('href="/widgets"');
     nav.path = '/';
   });
+
+  it('puts Widgets in the header nav, marked current on its own page', () => {
+    nav.path = '/widgets';
+    const html = render(createElement(AppShell, { children: createElement('p', null, 'page body') }));
+    const header = html.slice(html.indexOf('aria-label="Primary"'), html.indexOf('</nav>', html.indexOf('aria-label="Primary"')));
+    expect(header).toMatch(/<a[^>]*href="\/widgets"[^>]*aria-current="page"[^>]*>Widgets<\/a>|<a[^>]*aria-current="page"[^>]*href="\/widgets"[^>]*>Widgets<\/a>/u);
+    expect(header).not.toMatch(/aria-current="page"[^>]*>Markets</u);
+    nav.path = '/';
+  });
 });
 
 describe('widget builder', () => {
