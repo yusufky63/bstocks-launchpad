@@ -56,9 +56,8 @@ vi.mock('@/lib/onchain.server', async (importOriginal) => ({
 
 // Nothing here may reach Base. A smart-wallet signature check, for one, would otherwise send an
 // eth_call to the public RPC whenever a signature does not recover offline.
-vi.mock('@/lib/chain.server', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@/lib/chain.server')>()),
-  getPublicClient: () =>
+vi.mock('@/lib/chain.server', async (importOriginal) => {
+  const noChain = () =>
     new Proxy(
       {},
       {
@@ -66,8 +65,9 @@ vi.mock('@/lib/chain.server', async (importOriginal) => ({
           throw new Error('no chain in tests');
         },
       },
-    ),
-}));
+    );
+  return { ...(await importOriginal<typeof import('@/lib/chain.server')>()), getPublicClient: noChain, getLightClient: noChain };
+});
 
 /** A CIDv1-shaped string: `bafy`, a tag, padded to the 59 characters Pinata's CIDs have. */
 const cid = (tag: string) => `bafy${tag}${'a'.repeat(55 - tag.length)}`;
@@ -386,11 +386,16 @@ describe('market view helpers', () => {
       trades_all: 0,
       trades_24h: 0,
       holder_count: 0,
+      burned_raw: (12_500_000n * 10n ** 18n).toString(),
+      burns: 2,
+      last_burn_block: '77',
     });
     expect(view.priceInStock).toBeNull();
     expect(view.priceUsd).toBeNull();
     expect(view.fdvUsd).toBeNull();
     expect(view.stockFeedStatus).toBe('unknown');
+    // Burned tokens are a share of the fixed supply; FDV is not reduced by them.
+    expect(view).toMatchObject({ burned: 12_500_000, burnedPercent: 1.25, burns: 2, lastBurnBlock: '77' });
   });
 });
 

@@ -112,6 +112,20 @@ describe('executeSwap', () => {
     expect(f.sent.map((t) => t.to)).toEqual([ROUTER]);
     expect(deadlineOf(f.sent[0]!.data)).toBe(9_000_000_007n + 600n);
   });
+
+  it('hands over the swap receipt before it reports CONFIRMED, in both modes', async () => {
+    for (const atomic of [false, true]) {
+      const f = fakeClients({ allowance: 0n, atomic });
+      const seen: string[] = [];
+      await executeSwap(f.ctx, params, {
+        onReceipt: (receipt) => seen.push(`receipt:${receipt.status}`),
+        onState: (state) => seen.push(state),
+      });
+      // The receipt the page shows the trade from is the swap's, never the approval's.
+      expect(seen.filter((e) => e.startsWith('receipt:'))).toEqual(['receipt:success']);
+      expect(seen.slice(-2)).toEqual(['receipt:success', 'CONFIRMED']);
+    }
+  });
 });
 
 describe('revert decoding', () => {

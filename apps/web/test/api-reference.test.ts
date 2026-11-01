@@ -37,6 +37,12 @@ vi.mock('@/lib/chain.server', async (importOriginal) => ({
     call: async () => ({ data: '0x' }),
     getBlock: async () => ({ timestamp: 1_900_000_000n }),
   }),
+  getLightClient: () => ({
+    readContract: mocks.readContract,
+    simulateContract: async () => ({ result: [10n ** 21n, 200_000n] }),
+    call: async () => ({ data: '0x' }),
+    getBlock: async () => ({ timestamp: 1_900_000_000n }),
+  }),
 }));
 
 import { EndpointCard } from '@/components/api/endpoint-card';
@@ -52,6 +58,7 @@ import { API_ENDPOINTS, API_EXAMPLES, API_GROUPS, buildApiRequest, curlExample, 
 import { setDbForTests } from '@/lib/db.server';
 import { publicEnv } from '@/lib/env';
 import { poolKeyFor } from '@/lib/quote.server';
+import { invalidate } from '@/lib/cache.server';
 import { API_LIMITS, resetRateLimits } from '@/lib/rate-limit.server';
 
 const APP = 'https://launchpad.basestocks.finance';
@@ -136,6 +143,7 @@ describe('Try it and curl', () => {
 
 describe('the example requests pass the routes they document', () => {
   beforeEach(() => {
+    invalidate();
     resetRateLimits();
     setDbForTests({} as Db);
     mocks.readContract.mockImplementation(async ({ functionName }: { functionName: string }) => {

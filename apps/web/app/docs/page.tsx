@@ -24,6 +24,7 @@ const TOC = [
   ['editable', 'Editable profile'],
   ['fees', 'Fees'],
   ['pricing', 'Pricing math'],
+  ['burns', 'Burns'],
   ['indexer', 'Indexer'],
   ['profiles', 'Token profiles'],
   ['api', 'API'],
@@ -238,9 +239,21 @@ export default function DocsPage() {
             </p>
           </Section>
 
+          <Section id="burns">
+            <p>
+              A holder burns from the <strong>Burn</strong> button on a token&apos;s page, which only a wallet holding that token sees. The wallet sends <code>transfer(0x000000000000000000000000000000000000dEaD, amount)</code> on the token, after a simulation that turns &quot;you do not hold that many&quot; into a message instead of a lost fee. Nobody holds the key to that address, so the tokens never move again. No contract of the launchpad takes part and nobody is paid.
+            </p>
+            <p>
+              Tokens launched here have no burn function anyone may call: there is no admin and no burn role, ever. So a burn does not lower the token contract&apos;s <code>totalSupply</code>, and explorers keep showing one billion. This site counts what holders sent to <code>0x…dEaD</code> as burned and shows it as a share of that fixed supply: on the token page (a badge and a Burns tab with totals, the largest burners and every burn), in market lists, the activity feed, the platform stats and each wallet&apos;s page. FDV is still priced on the full supply. The few wei of rounding dust the launch itself sends there, in the launch transaction, are not counted. Each burn is valued at the token&apos;s last trade before it and the stock&apos;s quote then; a burn before the token&apos;s first trade has no price.
+            </p>
+            <p>
+              Burns come from the indexer&apos;s <code>Transfer</code> logs, so a burn sent from any wallet or app counts the same, and a reorg takes one back like any other transfer. The burner&apos;s own browser shows its burn from the receipt, marked pending, until the indexer records it. <code>GET /api/tokens/{'{address}'}/burns</code> serves the list and the totals.
+            </p>
+          </Section>
+
           <Section id="indexer">
             <p>
-              The indexer polls Base every 2 seconds and processes blocks that are at least 3 confirmations deep (<code>INDEXER_CONFIRMATIONS</code>, its default). It fetches <code>Launched</code>, <code>CreatorBought</code>, <code>MetadataEditable</code>, <code>ContractURIChanged</code> and <code>MetadataLocked</code> from every factory, <code>FeeCharged</code> and <code>FeesClaimed</code> from every hook, PoolManager <code>Swap</code> logs filtered by the known pool ids, and ERC-20 <code>Transfer</code> logs of launched tokens, then writes everything in one database transaction: launches, swaps (with side, price and trader), fee events, profile changes, transfers, balances and rebuilt one-minute candles.
+              The indexer polls Base every ten seconds (<code>INDEXER_POLL_MS</code>), five blocks a pass, and processes blocks that are at least 3 confirmations deep (<code>INDEXER_CONFIRMATIONS</code>, its default). It counts the head from the newest block it has read, since Base makes one every two seconds, and asks the node only when the block it counted to is not there yet. Near the head a pass asks for all its logs in one <code>eth_getLogs</code> request filtered to the events below, reads each block that holds a trade once with its transactions to learn every trader, and checks for a reorg through the parent hash of the first block it reads; a catch-up over a long range uses one narrower request per kind instead. It fetches <code>Launched</code>, <code>CreatorBought</code>, <code>MetadataEditable</code>, <code>ContractURIChanged</code> and <code>MetadataLocked</code> from every factory, <code>FeeCharged</code> and <code>FeesClaimed</code> from every hook, PoolManager <code>Swap</code> logs filtered by the known pool ids, and ERC-20 <code>Transfer</code> logs of launched tokens, then writes everything in one database transaction: launches, swaps (with side, price and trader), fee events, profile changes, transfers, balances and rebuilt one-minute candles.
             </p>
             <p>
               It follows every deployment in <code>STOCKPAIR_DEPLOYMENTS</code>, and a deployment added later gets a catch-up pass from its own deploy block. A creator&apos;s buy at launch is stored as a buy by the creator, taken from <code>CreatorBought</code>, so it is attributed correctly even when a bundler sent the transaction.
@@ -424,7 +437,7 @@ export default function DocsPage() {
               <li><strong>Launch checks.</strong> On the newest factory, <code>launchWithOptions</code> and <code>launchAndBuy</code> revert after their deadline and when the opening valuation changed after the creator reviewed it; a changed creation fee already fails the exact <code>msg.value</code> check.</li>
               <li><strong>Reentrancy and callbacks.</strong> The factory&apos;s launch and profile functions are <code>nonReentrant</code>; unlock callbacks accept calls only from the PoolManager.</li>
               <li><strong>Stale feeds rejected.</strong> A launch reverts when the stock&apos;s Chainlink reading is older than 7 days or not positive.</li>
-              <li><strong>Confirmed data only.</strong> The indexer records blocks three confirmations deep and rolls back on reorgs. The single row the web app writes on a client&apos;s behalf is a creator&apos;s signed profile, and it is written only after the signature verifies against the launch creator.</li>
+              <li><strong>Confirmed data only.</strong> The indexer records blocks three confirmations deep and rolls back on reorgs. The single row the web app writes on a client&apos;s behalf is a creator&apos;s signed profile, and it is written only after the signature verifies against the launch creator. The one thing shown ahead of the indexer is the visitor&apos;s own trade: the trade panel decodes the PoolManager <code>Swap</code> and hook <code>FeeCharged</code> logs from the swap&apos;s receipt, exactly as the indexer does, and shows the row, the chart&apos;s last bar and the price marked pending in that browser only, until the indexed trades list holds the same transaction and log. Nothing from a receipt is sent to the server.</li>
               <li><strong>Profiles are signed, not trusted.</strong> Off-chain profile edits, for fixed-profile tokens only, require an EIP-712 signature from the launch creator over the exact fields and image hash, with a 15-minute validity window and monotonic timestamps against replay. Onchain edits of an editable profile come only from the creator&apos;s own transaction.</li>
               <li><strong>Input validation.</strong> Every API parameter is schema-checked; addresses are checksummed and lower-cased; metadata uploads are limited to 2 MB images of four types and 1,000-character descriptions; X and Telegram links are normalised to <code>https://x.com/handle</code> and <code>https://t.me/handle</code>.</li>
               <li><strong>Framing.</strong> Only the widget pages under <code>/embed</code> may be framed, and by any site; every other page refuses. A widget holds no keys either: each trade or launch still ends in the visitor&apos;s own wallet, which a host page cannot draw over or answer for. Links out of a widget open a new tab rather than loading the site inside the host&apos;s frame.</li>

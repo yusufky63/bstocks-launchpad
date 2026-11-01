@@ -4,8 +4,12 @@ import type { MarketView } from './market-view';
 
 export type { MarketView };
 
-/** Fields needed to quote and trade; available from a confirmed launch before indexing. */
-export type TradeMarket = Pick<MarketView, 'token' | 'symbol' | 'factory' | 'hook' | 'stock' | 'stockUsd' | 'priceUsd' | 'priceInStock' | 'stockFeedStatus'>;
+/**
+ * Fields needed to quote and trade; available from a confirmed launch before indexing. The pool and
+ * creator come with an indexed market only, and let a finished trade show from its receipt.
+ */
+export type TradeMarket = Pick<MarketView, 'token' | 'symbol' | 'factory' | 'hook' | 'stock' | 'stockUsd' | 'priceUsd' | 'priceInStock' | 'stockFeedStatus'> &
+  Partial<Pick<MarketView, 'poolId' | 'creator'>>;
 
 export type FeedStatus = 'live' | 'holding' | 'unknown';
 
@@ -43,6 +47,8 @@ export type SwapView = {
   blockNumber: string;
   blockTime: string;
   isCreator: boolean;
+  /** This browser's own trade, read from its receipt; the indexer has not stored it yet. Never set by the API. */
+  pending?: boolean;
 };
 
 export type SwapsResponse = { token: string; stock: { address: string; symbol: string; decimals: number }; stockUsd: number | null; swaps: SwapView[] };
@@ -112,8 +118,47 @@ export type QuoteView = {
 
 export type ApiErrorBody = { error: { code: string; message: string; details?: Record<string, unknown> } };
 
+/** One burn: tokens a holder sent to 0x…dEaD. */
+export type BurnView = {
+  txHash: string;
+  logIndex: number;
+  token: string;
+  name: string;
+  symbol: string;
+  imageUrl: string | null;
+  burner: string;
+  isCreator: boolean;
+  /** Whole tokens. */
+  amount: number;
+  amountRaw: string;
+  supplyPercent: number;
+  /** What the tokens were worth when burned (last trade before it, stock quote then); null before the token's first trade. */
+  valueUsd: number | null;
+  blockNumber: string;
+  blockTime: string;
+  /** This browser's own burn, read from its receipt; the indexer has not stored it yet. Never set by the API. */
+  pending?: boolean;
+};
+
+export type BurnLeader = { burner: string; burned: number; supplyPercent: number; burns: number };
+
+export type BurnSummary = {
+  burned: number;
+  burnedRaw: string;
+  supplyPercent: number;
+  burns: number;
+  burners: number;
+  lastBurnAt: string | null;
+  lastBurnBlock: string | null;
+  top: BurnLeader[];
+};
+
+/** `summary` comes with the first page only; a page further back carries just the rows. */
+export type BurnsResponse = { token: string; symbol: string; summary: BurnSummary | null; burns: BurnView[] };
+
 export type ActivityItem = {
-  kind: 'launch' | 'swap';
+  /** A burn has no side and no stock amount; `amountToken` is what was burned. */
+  kind: 'launch' | 'swap' | 'burn';
   at: string;
   txHash: string;
   token: string;
@@ -152,6 +197,8 @@ export type StatsResponse = {
   feesByStock: (StockFigure & { creatorAmount: number; platformAmount: number })[];
   topCreators: TopCreator[];
   launchesByStock: { stock: string; symbol: string; launches: number }[];
+  /** `valueUsd`: what the burned tokens were worth when burned; burns before a token's first trade add nothing. */
+  burns: { count: number; burners: number; tokens: number; valueUsd: number | null };
   asOf: string;
 };
 

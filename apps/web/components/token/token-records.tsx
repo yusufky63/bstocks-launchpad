@@ -9,11 +9,14 @@ import { Tabs } from '@/components/ui/controls';
 import { AddressLabel, Named, TimeAgo, TxLink } from '@/components/ui/display';
 import { Empty, KeyValue, Skeleton, cx } from '@/components/ui/primitives';
 import { formatDateTime, formatNumber, formatPct, formatRatio, formatUsd, shortAddress } from '@/lib/format';
+import { usePendingTrades, withPendingSwaps } from '@/lib/pending-trades';
 import { apiGet, useHolders, useSwaps } from '@/lib/queries';
 import type { LaunchInfo, MarketView, ProfileInfo, SwapView, SwapsResponse, TokenDetails } from '@/lib/types';
 import { ExternalLink } from 'lucide-react';
 
-export type RecordsTab = 'trades' | 'holders' | 'fees' | 'details';
+import { BurnsTab } from './burns-tab';
+
+export type RecordsTab = 'trades' | 'holders' | 'burns' | 'fees' | 'details';
 type Tab = RecordsTab;
 
 /** Page controls shared by the trades and holders tabs: a position readout and two steps. */
@@ -46,13 +49,22 @@ function DevTag() {
   );
 }
 
+/** This browser's own trade, shown from its receipt until the indexer stores it. */
+function PendingTag() {
+  return (
+    <span title="Your trade, read from its receipt. It is replaced by the indexed record a few seconds after the block is confirmed." className="text-[9px] font-mono uppercase tracking-[0.08em] px-1 leading-[14px] rounded-[3px] bg-primary-soft text-primary">
+      pending
+    </span>
+  );
+}
+
 /** Rows shown per page in the trades and holders tabs. */
 const PER_PAGE = 25;
 /** Rows pulled from the API in one request; a fetch covers several pages of scrolling. */
 const FETCH = 100;
 const HOLDERS_MAX = 500;
 
-const TABS: readonly Tab[] = ['trades', 'holders', 'fees', 'details'];
+const TABS: readonly Tab[] = ['trades', 'holders', 'burns', 'fees', 'details'];
 
 function tabFrom(value: string | null, allowed: readonly Tab[]): Tab {
   return allowed.includes(value as Tab) ? (value as Tab) : allowed[0]!;
@@ -85,6 +97,13 @@ export function TokenRecords({
   // Telegram channel's Holders button and its Trade button landed on the same view.
   const search = useSearchParams();
   const [tab, setTab] = useState<Tab>(() => tabFrom(search.get('tab'), tabs));
+  // A link on the same page (the header's burned badge) changes the parameter after mount.
+  const tabParam = search.get('tab');
+  const [seenTabParam, setSeenTabParam] = useState(tabParam);
+  if (tabParam !== seenTabParam) {
+    setSeenTabParam(tabParam);
+    if (tabParam && tabs.includes(tabParam as Tab)) setTab(tabParam as Tab);
+  }
   const swaps = useSwaps(market.token, tab === 'trades');
   const [holdersLimit, setHoldersLimit] = useState(FETCH);
   const holders = useHolders(market.token, tab === 'holders', holdersLimit);
@@ -95,7 +114,10 @@ export function TokenRecords({
   const [exhausted, setExhausted] = useState(false);
   const [tradePage, setTradePage] = useState(0);
   const [holderPage, setHolderPage] = useState(0);
-  const latest = swaps.data?.swaps;
+  const pending = usePendingTrades(market.token);
+  const indexedLatest = swaps.data?.swaps;
+  // This browser's own trades sit on top, marked, until the indexed list holds them.
+  const latest = useMemo(() => (indexedLatest ? withPendingSwaps(indexedLatest, pending) : undefined), [indexedLatest, pending]);
   const allSwaps = useMemo(() => {
     const head = latest ?? [];
     const seen = new Set(head.map((s) => `${s.txHash}:${s.logIndex}`));
@@ -154,6 +176,7 @@ export function TokenRecords({
           [
             { id: 'trades', label: trades === undefined ? 'Trades' : `Trades · ${formatNumber(trades, 0)}` },
             { id: 'holders', label: `Holders · ${formatNumber(market.holders, 0)}` },
+            { id: 'burns', label: market.burns > 0 ? `Burns · ${formatNumber(market.burns, 0)}` : 'Burns' },
             { id: 'fees', label: 'Fees & pool' },
             { id: 'details', label: 'Details' },
           ] as const
@@ -188,6 +211,11 @@ export function TokenRecords({
                     {formatNumber(s.amountToken, 2)} <span className="text-ink-muted">{market.symbol}</span>
                   </span>
                   <span className="block font-mono text-[11px] text-ink-muted truncate" title={formatDateTime(s.blockTime)}>
+                    {s.pending && (
+                      <>
+                        <PendingTag />{' '}
+                      </>
+                    )}
                     <TimeAgo value={s.blockTime} placeholder="…" />
                     {' · '}
                     {s.trader ? (
@@ -285,6 +313,8 @@ export function TokenRecords({
             />
           </div>
         ))}
+
+      {tab === 'burns' && <BurnsTab market={market} perPage={perPage} />}
 
       {tab === 'fees' && fees}
 

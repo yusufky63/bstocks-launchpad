@@ -25,7 +25,11 @@ const schema = z.object({
   BASE_RPC_URL: z.string().url(),
   BASE_RPC_URL_FALLBACK: z.string().url().optional(),
   INDEXER_CONFIRMATIONS: z.coerce.number().int().min(1).max(100).default(3),
-  INDEXER_POLL_MS: z.coerce.number().int().min(1_000).max(60_000).default(2_000),
+  // Base makes a block every 2 s, and a pass costs the same few RPC calls whether it covers one
+  // block or five, so the poll interval sets the bill. Every 10 s a pass takes five blocks; a
+  // trader's own swap shows from its receipt anyway, so only other people's trades wait for it.
+  // 4000 shows them six seconds sooner for about 2.5x the RPC usage.
+  INDEXER_POLL_MS: z.coerce.number().int().min(1_000).max(60_000).default(10_000),
   INDEXER_MAX_RANGE: z.coerce.number().int().min(10).max(10_000).default(2_000),
   INDEXER_QUOTE_INTERVAL_MS: z.coerce.number().int().min(5_000).max(600_000).default(60_000),
   IPFS_GATEWAY: z.string().url().default('https://gateway.pinata.cloud'),

@@ -30,7 +30,7 @@ const RESTRICTED_WRITES = [/^\/api\/quote/, /^\/api\/metadata/, /^\/api\/tx\//]
  * pin rate limit both key on the visitor's own connection, and a server in a blocked country would
  * be refused for everyone. Every route here is public and cookie-less, so the list only states who
  * the API is meant for. Partners read what a launch and a trade need (the launch config, stocks,
- * markets, activity, one token with its trades, candles and holders, a wallet, the region) and
+ * markets, activity, one token with its trades, candles, holders and burns, a wallet, the region) and
  * post the metadata pin, quotes and the transaction builders. Each of the routes that used to stay
  * closed to them (quotes, wallets, token detail) now has a per-caller limit of its own
  * (lib/rate-limit.server.ts), on top of the memoised reads behind it.
@@ -45,7 +45,7 @@ const PARTNER_ORIGINS = (process.env.PARTNER_ORIGINS ?? 'https://zkcodex.com,htt
 const PARTNER_PREVIEW = /^https:\/\/zk-codex-[a-z0-9-]+-yusufky63s-projects\.vercel\.app$/u
 const PARTNER_READS = [
   /^\/api\/(?:launch-config|stocks|markets|region|health|activity)\/?$/,
-  /^\/api\/tokens\/0x[0-9a-fA-F]{40}(?:\/(?:swaps|candles|holders))?\/?$/,
+  /^\/api\/tokens\/0x[0-9a-fA-F]{40}(?:\/(?:swaps|candles|holders|burns))?\/?$/,
   /^\/api\/wallet\/0x[0-9a-fA-F]{40}\/?$/,
 ]
 const PARTNER_WRITES = [/^\/api\/(?:metadata|quote|tx\/swap|tx\/launch)\/?$/]

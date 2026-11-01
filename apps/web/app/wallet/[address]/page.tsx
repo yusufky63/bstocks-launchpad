@@ -9,7 +9,7 @@ import { Badge, Empty, KeyValue, LinkButton, Module, ModuleHeader, PageTitle, St
 import { ClaimFees } from '@/components/wallet/claim-fees';
 import { parseAddressParam } from '@/lib/api.server';
 import { getDb } from '@/lib/db.server';
-import { formatDateTime, formatNumber, formatUsd, shortAddress } from '@/lib/format';
+import { formatDateTime, formatNumber, formatSupplyPct, formatUsd, shortAddress } from '@/lib/format';
 import { readWalletSummary } from '@/lib/wallet.server';
 
 export const dynamic = 'force-dynamic';
@@ -143,6 +143,39 @@ export default async function WalletPage({ params }: Props) {
               ))
             )}
           </Module>
+
+          {summary.burns.length > 0 && (
+            <Module>
+              <ModuleHeader index="04" title={`Burns · ${summary.burns.length}`} action={<span className="font-mono text-[11px] text-ink-muted">sent to 0x…dEaD</span>} />
+              {summary.burns.map((b) => (
+                <div key={`${b.txHash}:${b.logIndex}`} className="rail grid grid-cols-[minmax(0,1fr)_auto_auto] gap-3 px-4 py-2.5 border-b border-line last:border-b-0 items-center text-[13px]">
+                  <span className="flex items-center gap-3 min-w-0">
+                    <TokenLogo src={b.imageUrl} symbol={b.symbol} size={28} />
+                    <span className="min-w-0">
+                      <Link href={`/token/${b.token}?tab=burns`} className="font-medium hover:text-primary truncate block">
+                        {b.name} <span className="text-ink-muted font-mono text-[11px]">{b.symbol}</span>
+                        {b.isCreator && <Badge tone="warning" className="ml-2">dev</Badge>}
+                      </Link>
+                      <span className="block font-mono text-[11px] text-ink-muted">
+                        <TimeAgo value={b.blockTime} placeholder="…" />
+                      </span>
+                    </span>
+                  </span>
+                  <span className="text-right font-mono num">
+                    <span className="block">
+                      {formatNumber(b.amount, 2)} {b.symbol}
+                    </span>
+                    <span className="block text-ink-muted text-[11px]">
+                      {formatSupplyPct(b.supplyPercent)} of supply{b.valueUsd !== null ? ` · ${formatUsd(b.valueUsd)} when burned` : ''}
+                    </span>
+                  </span>
+                  <TxLink hash={b.txHash} className="text-[12px]">
+                    tx
+                  </TxLink>
+                </div>
+              ))}
+            </Module>
+          )}
         </div>
 
         <div className="flex flex-col gap-5">

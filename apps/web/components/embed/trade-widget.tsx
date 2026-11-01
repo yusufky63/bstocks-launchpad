@@ -12,7 +12,8 @@ import { Module, Skeleton } from '@/components/ui/primitives';
 import type { EmbedModule } from '@/lib/embed';
 import { publicEnv } from '@/lib/env';
 import { formatUsd } from '@/lib/format';
-import { useToken } from '@/lib/queries';
+import { usePendingTrades, withPendingPrice } from '@/lib/pending-trades';
+import { useLiveTrades, useToken } from '@/lib/queries';
 import { tradeMarketOf } from '@/lib/trade-market';
 import type { TokenResponse } from '@/lib/types';
 
@@ -39,11 +40,17 @@ export function TradeWidget({
   show?: readonly EmbedModule[];
 }) {
   const { data } = useToken(address, initialData);
-  const view = data ?? initialData;
+  const pending = usePendingTrades(address);
+  const live = data ?? initialData;
+  // Priced at this browser's own trade until the indexed market catches up with it.
+  const view = live.status === 'indexed' ? { ...live, market: withPendingPrice(live.market, pending) } : live;
   const market = tradeMarketOf(view);
   const hidden = useEmbedHidden();
   const indexed = view.status === 'indexed' ? view.market : null;
   const tabs = (['trades', 'holders'] as const).filter((tab) => show.includes(tab));
+  // Only a widget that shows the chart or a list follows new trades; a bare trade panel does not
+  // need a poll every few seconds from every page it is embedded in.
+  useLiveTrades(address, indexed !== null && (show.includes('chart') || tabs.length > 0));
   const waiting = (show.includes('chart') || tabs.length > 0) && !indexed && view.status !== 'pending';
 
   return (

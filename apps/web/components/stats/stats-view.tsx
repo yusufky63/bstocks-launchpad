@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { StockTile, TokenLogo } from '@/components/stock/stock-coin';
 import { Named, TimeAgo, TxLink } from '@/components/ui/display';
 import { Badge, Empty, KeyValue, Module, ModuleHeader, PageTitle, Skeleton, StatStrip, cx } from '@/components/ui/primitives';
-import { formatDateTime, formatNumber, formatUsd, shortAddress } from '@/lib/format';
+import { formatDateTime, formatNumber, formatSupplyPct, formatUsd, shortAddress } from '@/lib/format';
 import { useActivity, useStats } from '@/lib/queries';
 import type { ActivityItem, ActivityResponse, StatsResponse } from '@/lib/types';
 
@@ -54,7 +54,7 @@ export function StatsView({ initialStats, initialActivity }: { initialStats?: St
 
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_380px] gap-5 items-start">
         <Module ticks>
-          <ModuleHeader index="01" title="Activity" action={<span className="font-mono text-[11px] text-ink-muted">launches and swaps · live</span>} />
+          <ModuleHeader index="01" title="Activity" action={<span className="font-mono text-[11px] text-ink-muted">launches, swaps and burns · live</span>} />
           {!activity && (
             <div className="p-4 flex flex-col gap-2">
               <Skeleton className="h-10" />
@@ -126,6 +126,28 @@ export function StatsView({ initialStats, initialActivity }: { initialStats?: St
           </Module>
 
           <Module>
+            <ModuleHeader title="Burns" action={<span className="font-mono text-[11px] text-ink-muted">sent to 0x…dEaD</span>} />
+            <div className="module-grid grid-cols-3 rounded-none border-0 border-b border-line">
+              <div className="p-3">
+                <div className="font-mono text-[10px] uppercase tracking-[0.12em] text-ink-muted">Burns</div>
+                <div className="display num text-[18px] leading-tight">{formatNumber(s.burns.count, 0)}</div>
+              </div>
+              <div className="p-3">
+                <div className="font-mono text-[10px] uppercase tracking-[0.12em] text-ink-muted">Tokens</div>
+                <div className="display num text-[18px] leading-tight">{formatNumber(s.burns.tokens, 0)}</div>
+              </div>
+              <div className="p-3">
+                <div className="font-mono text-[10px] uppercase tracking-[0.12em] text-ink-muted">Burners</div>
+                <div className="display num text-[18px] leading-tight">{formatNumber(s.burns.burners, 0)}</div>
+              </div>
+            </div>
+            <div className="px-4 py-2">
+              <KeyValue k="Worth when burned" v={s.burns.count === 0 ? '—' : formatUsd(s.burns.valueUsd)} />
+            </div>
+            <p className="px-4 py-2.5 border-t border-line text-[11px] text-ink-muted">Holders burn from a token's page. Each burn is valued at the token's last trade before it; one before a token's first trade adds nothing.</p>
+          </Module>
+
+          <Module>
             <ModuleHeader title="Volume by stock" />
             <div className="px-4 py-2">
               {s.volumeByStock.length === 0 && <p className="py-2 text-[13px] text-ink-secondary">No trades yet.</p>}
@@ -154,10 +176,11 @@ export function StatsView({ initialStats, initialActivity }: { initialStats?: St
 
 function ActivityRow({ item }: { item: ActivityItem }) {
   const launch = item.kind === 'launch';
+  const burn = item.kind === 'burn';
   return (
     <div className="rail grid grid-cols-[72px_minmax(0,1fr)_auto_36px] gap-3 px-4 py-2.5 border-b border-line last:border-b-0 items-center text-[13px]">
       <span className="flex items-center gap-1">
-        <Badge tone={launch ? 'primary' : item.side === 'buy' ? 'positive' : 'danger'}>{launch ? 'launch' : item.side}</Badge>
+        <Badge tone={launch ? 'primary' : burn ? 'neutral' : item.side === 'buy' ? 'positive' : 'danger'}>{launch ? 'launch' : burn ? 'burn' : item.side}</Badge>
       </span>
       <span className="flex items-center gap-3 min-w-0">
         <TokenLogo src={item.imageUrl} symbol={item.symbol} size={28} />
@@ -180,6 +203,13 @@ function ActivityRow({ item }: { item: ActivityItem }) {
       <span className="text-right font-mono num">
         {launch ? (
           <span className="text-ink-secondary">new pool</span>
+        ) : burn ? (
+          <>
+            <span className="block">
+              {formatNumber(item.amountToken, 0)} {item.symbol}
+            </span>
+            <span className="block text-ink-muted text-[11px]">{item.amountToken === null ? '' : `${formatSupplyPct((item.amountToken / 1e9) * 100)} of supply`}</span>
+          </>
         ) : (
           <>
             <span className="block">{formatUsd(item.amountUsd)}</span>

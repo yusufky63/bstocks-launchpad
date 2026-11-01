@@ -41,6 +41,16 @@ export function formatPct(value: number | null | undefined, opts?: { sign?: bool
   return `${sign}${value.toFixed(digits)}%`;
 }
 
+/**
+ * A share of the billion-token supply. Two decimals hide a burn of a few thousand tokens as 0.00%,
+ * so small shares get the digits they need; large ones stay short enough for a phone.
+ */
+export function formatSupplyPct(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '—';
+  const abs = Math.abs(value);
+  return formatPct(value, { sign: false, digits: abs === 0 || abs >= 0.1 ? 2 : abs >= 0.001 ? 3 : 5 });
+}
+
 /** Kept for existing callers; identical to formatPct with a sign. */
 export function formatPercent(value: number | null | undefined): string {
   return formatPct(value);

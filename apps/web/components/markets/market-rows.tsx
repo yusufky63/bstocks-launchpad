@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { StockTile, TokenLogo } from '@/components/stock/stock-coin';
 import { AnimatedNumber, PriceChange, TimeAgo, Named } from '@/components/ui/display';
 import { Badge, cx } from '@/components/ui/primitives';
-import { formatNumber, formatUsd, shortAddress } from '@/lib/format';
+import { formatNumber, formatSupplyPct, formatUsd, shortAddress } from '@/lib/format';
 import type { MarketView } from '@/lib/types';
 
 /** The pair chip: which stock this token trades against. */
@@ -61,6 +61,7 @@ export function MarketDetailRow({ market, rank }: { market: MarketView; rank?: n
             <PairBadge market={market} />
             <span className="truncate">
               by <Named address={market.creator} className="font-mono" /> · <TimeAgo value={market.launchedAt} placeholder="…" />
+              {market.burns > 0 && <span className="font-mono text-[11px] text-danger-fg"> · burned {formatSupplyPct(market.burnedPercent)}</span>}
             </span>
           </span>
         </span>

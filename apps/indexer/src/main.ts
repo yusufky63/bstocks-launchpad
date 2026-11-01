@@ -1,13 +1,14 @@
 import { createServer } from 'node:http';
 import process from 'node:process';
 
-import { createPostgresDb, migrate, readCursor } from '@stockpair/core/db';
+import { createPostgresDb, migrate } from '@stockpair/core/db';
 
 import { createChainReader } from './chain-reader';
 import { loadConfig, loadEnvFiles } from './config';
+import { HeadClock } from './head-clock';
 import { backfillMetadata, metadataWorker } from './metadata';
 import { refreshStockQuotes } from './quotes';
-import { catchUpDeployments, DeploymentMismatchError, needsMetadataFetch, syncOnce } from './sync';
+import { catchUpDeployments, DeploymentMismatchError, needsMetadataFetch, nextBlockAfter, syncOnce } from './sync';
 
 function log(message: string, fields: Record<string, unknown> = {}): void {
   process.stdout.write(`${JSON.stringify({ time: new Date().toISOString(), message, ...fields })}\n`);
@@ -19,6 +20,7 @@ async function main(): Promise<void> {
   const db = await createPostgresDb(config.databaseUrl, { max: 3 });
   await migrate(db, log);
   const chain = createChainReader(config.rpcUrls);
+  const clock = new HeadClock();
 
   const state = {
     startedAt: new Date().toISOString(),
@@ -55,7 +57,6 @@ async function main(): Promise<void> {
   // match the database or the chain is not retried: the process exits and says why.
   let caughtUp = false;
   const metadata = metadataWorker((limit) => backfillMetadata(db, config.ipfsGateway, fetch, { limit }), log);
-  const firstBlock = config.deployments[0]!.deployBlock;
   log('indexer starting', {
     deployments: config.deployments.map((d) => ({ factory: d.factory, hook: d.hook, deployBlock: d.deployBlock.toString() })),
     confirmations: config.confirmations,
@@ -88,10 +89,13 @@ async function main(): Promise<void> {
         deployments: config.deployments,
         confirmations: config.confirmations,
         maxRange: config.maxRange,
+        clock,
         log,
       });
-      state.head = (await chain.getBlockNumber()).toString();
-      state.nextBlock = (await readCursor(db))?.next_block ?? firstBlock.toString();
+      // From the pass itself: reading the head and the cursor again cost two round trips per pass,
+      // one of them to a database on another continent, for a health readout.
+      state.head = result.head.toString();
+      state.nextBlock = nextBlockAfter(result).toString();
       state.lastSync = { ...serialize(result), at: new Date().toISOString() };
       state.lastError = null;
       // Retries of failed profile fetches are due on a clock, whatever the chain is doing.

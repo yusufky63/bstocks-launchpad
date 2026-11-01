@@ -2,7 +2,7 @@ import 'server-only';
 
 import { getAddress, namehash, parseAbi, type Address, type Hex } from 'viem';
 
-import { getPublicClient } from './chain.server';
+import { getLightClient } from './chain.server';
 
 /**
  * Basenames are ENS-style names issued by Coinbase on Base (e.g. "yusuf.base.eth"). Resolution is
@@ -50,7 +50,8 @@ export async function resolveBasenames(input: readonly string[]): Promise<Record
   }
   if (misses.length === 0) return out;
 
-  const client = getPublicClient();
+  // A name that does not resolve just shows the address, so the free endpoints carry this.
+  const client = getLightClient();
 
   // Pass 1: reverse lookup name() for every miss.
   let names: (string | null)[];

@@ -112,11 +112,15 @@ export async function quoteExactIn(db: Db, request: QuoteRequest): Promise<Quote
   const zeroForOne = request.side === 'buy' ? !tokenIsCurrency0 : tokenIsCurrency0;
   const poolId = market ? market.pool_id as Hex : poolIdFor(key);
 
-  const [slot0, liquidity, feeBps] = await Promise.all([
-    client.readContract({ address: BASE_CONTRACTS.stateView, abi: stateViewAbi, functionName: 'getSlot0', args: [poolId] }),
-    client.readContract({ address: BASE_CONTRACTS.stateView, abi: stateViewAbi, functionName: 'getLiquidity', args: [poolId] }),
-    client.readContract({ address: hook, abi: stockPairHookAbi, functionName: 'currentFeeBps', args: [poolId] }),
-  ]);
+  // One Multicall3 call (the client folds the three), shared for two seconds by every quote on this
+  // pool: a visitor typing an amount asks again on each change, and the pool moves at most once a block.
+  const [slot0, liquidity, feeBps] = await cached(`quote-pool:${poolId}:${hook}`, 2_000, () =>
+    Promise.all([
+      client.readContract({ address: BASE_CONTRACTS.stateView, abi: stateViewAbi, functionName: 'getSlot0', args: [poolId] }),
+      client.readContract({ address: BASE_CONTRACTS.stateView, abi: stateViewAbi, functionName: 'getLiquidity', args: [poolId] }),
+      client.readContract({ address: hook, abi: stockPairHookAbi, functionName: 'currentFeeBps', args: [poolId] }),
+    ]),
+  );
 
   let amountOut: bigint;
   let gasEstimate: bigint;

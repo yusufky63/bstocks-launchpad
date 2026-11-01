@@ -22,16 +22,23 @@ export async function refreshStockQuotes(
   const launched = new Set(
     (await db.query<{ stock: string }>('SELECT DISTINCT stock FROM launches')).map((row) => row.stock.toLowerCase()),
   );
-  const block = await chain.getBlockNumber();
+  // Every chain read goes out at once: the reader folds reads issued together into one request,
+  // so thirteen stocks cost one call a minute instead of twenty-six. The feeds of stocks that end up
+  // skipped are read too; asking for them costs nothing extra in the same request.
+  const [block, enabledFlags, readings] = await Promise.all([
+    chain.getBlockNumber(),
+    Promise.all(stocks.map((stock) => chain.readStockEnabled(factory, stock.address as Address))),
+    Promise.all(stocks.map((stock) => chain.readFeed(stock.feed as Address))),
+  ]);
   let updated = 0;
-  for (const stock of stocks) {
-    const enabled = await chain.readStockEnabled(factory, stock.address as Address);
+  for (const [i, stock] of stocks.entries()) {
+    const enabled = enabledFlags[i] ?? null;
     if (enabled !== null && enabled !== stock.enabled) {
       await setStockEnabled(db, stock.address, enabled);
       stock.enabled = enabled;
     }
     if (!stock.enabled && !launched.has(stock.address.toLowerCase())) continue;
-    const reading = await chain.readFeed(stock.feed as Address);
+    const reading = readings[i] ?? null;
     if (!reading || reading.answer <= 0n) continue;
     await upsertStockQuote(db, {
       stock: stock.address,

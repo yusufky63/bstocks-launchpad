@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Address, Hash } from 'viem';
+import type { Address, Hash, TransactionReceipt } from 'viem';
 import { useAccount, usePublicClient, useWalletClient } from 'wagmi';
 import { base } from 'wagmi/chains';
 
@@ -19,7 +19,7 @@ import type { QuoteView, TradeMarket } from '@/lib/types';
 interface Props {
   open: boolean;
   onClose: () => void;
-  onDone?: (hash: Hash) => void;
+  onDone?: (hash: Hash, receipt: TransactionReceipt | null) => void;
   market: TradeMarket;
   quote: QuoteView;
   amountIn: bigint;
@@ -50,6 +50,7 @@ export function TradeReviewSheet({ open, onClose, onDone, market, quote, amountI
   const [mode, setMode] = useState<'batched' | 'sequential' | null>(null);
   const [impactAck, setImpactAck] = useState(false);
   const doneReported = useRef(false);
+  const receipt = useRef<TransactionReceipt | null>(null);
 
   const buy = quote.side === 'buy';
   const inputDecimals = buy ? market.stock.decimals : 18;
@@ -77,6 +78,7 @@ export function TradeReviewSheet({ open, onClose, onDone, market, quote, amountI
     setMode(null);
     setImpactAck(false);
     doneReported.current = false;
+    receipt.current = null;
   }, []);
 
   const handleClose = () => {
@@ -87,7 +89,7 @@ export function TradeReviewSheet({ open, onClose, onDone, market, quote, amountI
   useEffect(() => {
     if (state === 'CONFIRMED' && txHash && !doneReported.current) {
       doneReported.current = true;
-      onDone?.(txHash);
+      onDone?.(txHash, receipt.current);
     }
   }, [state, txHash, onDone]);
 
@@ -103,7 +105,8 @@ export function TradeReviewSheet({ open, onClose, onDone, market, quote, amountI
       const result = await executeSwap(
         { account: address, walletClient, publicClient },
         { quote, amountIn, minOut, inputToken, router },
-        { onState: setState, onApproval: setApprovalHash, onMode: setMode, onSubmitted: (h) => setTxHash(h) },
+        // The receipt is kept before CONFIRMED is set, so the effect that reports it can hand it on.
+        { onState: setState, onApproval: setApprovalHash, onMode: setMode, onSubmitted: (h) => setTxHash(h), onReceipt: (r) => { receipt.current = r; } },
       );
       setTxHash(result.txHash);
       setState('CONFIRMED');

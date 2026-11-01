@@ -44,7 +44,8 @@ function snap(over: Partial<Snapshot> = {}): Snapshot {
       { address: '0x2222222222222222222222222222222222222222', sharePercent: 2.8 },
     ],
     topShare: 23,
-    launchedAt: '2026-09-06T01:54:01.000Z',
+    // Five days before the run: a fixed date aged past a month and the post read "1mo", not "5d".
+    launchedAt: new Date(Date.now() - 5 * 86_400_000).toISOString(),
     creator: '0x3333333333333333333333333333333333333333',
     creatorName: 'yusuf.base.eth',
     website: 'https://basestocks.finance',

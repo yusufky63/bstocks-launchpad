@@ -88,6 +88,8 @@ export const API_BUDGET_MS = 9_000;
 const STALE_LOAD_MS = 12_000;
 
 export const TTL = {
+  /** A token's newest trades: polled every few seconds by every open page, so only bursts are shared. */
+  live: 1_000,
   /** Lists that refresh with every indexer tick. */
   list: 5_000,
   /** One token's market row. */

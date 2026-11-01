@@ -1,6 +1,7 @@
 import type { Address, Hex } from 'viem';
 import {
   BaseError,
+  BlockNotFoundError,
   ContractFunctionRevertedError,
   ContractFunctionZeroDataError,
   createPublicClient,
@@ -13,17 +14,25 @@ import { base } from 'viem/chains';
 
 import type { RawLog } from '@stockpair/core';
 
+export type BlockHeader = { number: bigint; hash: Hex; parentHash: Hex; timestamp: bigint };
+
 /** The minimal chain surface the indexer needs; tests provide an in-memory implementation. */
 export interface ChainReader {
   getBlockNumber(): Promise<bigint>;
-  getBlock(number: bigint): Promise<{ number: bigint; hash: Hex; parentHash: Hex; timestamp: bigint }>;
+  getBlock(number: bigint): Promise<BlockHeader>;
+  /** Like getBlock, but null when the node has no such block yet instead of an error. */
+  findBlock(number: bigint): Promise<BlockHeader | null>;
+  /**
+   * A block with the sender of each of its transactions, keyed by lowercase hash. A swap's trader is
+   * its transaction's sender; reading the block costs one request however many swaps it holds.
+   */
+  getBlockWithSenders(number: bigint): Promise<{ block: BlockHeader; senders: Map<Hex, Address> }>;
   getLogs(filter: {
     address?: Address | Address[];
     topics?: (Hex | Hex[] | null)[];
     fromBlock: bigint;
     toBlock: bigint;
   }): Promise<RawLog[]>;
-  getTransactionSender(hash: Hex): Promise<Address | null>;
   readFeed(feed: Address): Promise<{ answer: bigint; updatedAt: bigint } | null>;
   /** Whether the factory currently accepts launches against this stock. */
   readStockEnabled(factory: Address, stock: Address): Promise<boolean | null>;
@@ -71,13 +80,44 @@ export function createChainReader(rpcUrls: readonly string[]): ChainReader {
       { rank: false },
     ),
   });
-  const senderCache = new Map<Hex, Address | null>();
+  // The stock registry reads (a feed and an enabled flag per stock, every minute) go through
+  // Multicall3: issued together they leave as one eth_call instead of one each, which the RPC bills
+  // as one call. Only those reads use it; the deployment checks keep their plain calls, whose
+  // revert and no-code answers they tell apart.
+  const registryClient = createPublicClient({
+    chain: base,
+    batch: { multicall: { batchSize: 16_384, wait: 16 } },
+    transport: fallback(
+      rpcUrls.map((url) => http(url, { retryCount: 2, timeout: 15_000 })),
+      { rank: false },
+    ),
+  });
+  const header = (block: { number: bigint; hash: Hex; parentHash: Hex; timestamp: bigint }): BlockHeader => ({
+    number: block.number,
+    hash: block.hash,
+    parentHash: block.parentHash,
+    timestamp: block.timestamp,
+  });
 
   return {
     getBlockNumber: () => client.getBlockNumber(),
     async getBlock(number) {
-      const block = await client.getBlock({ blockNumber: number });
-      return { number: block.number, hash: block.hash, parentHash: block.parentHash, timestamp: block.timestamp };
+      return header(await client.getBlock({ blockNumber: number }));
+    },
+    async findBlock(number) {
+      try {
+        return header(await client.getBlock({ blockNumber: number }));
+      } catch (error) {
+        if (error instanceof BaseError && error.walk((e) => e instanceof BlockNotFoundError)) return null;
+        throw error;
+      }
+    },
+    async getBlockWithSenders(number) {
+      const block = await client.getBlock({ blockNumber: number, includeTransactions: true });
+      return {
+        block: header(block),
+        senders: new Map(block.transactions.map((tx) => [tx.hash.toLowerCase() as Hex, tx.from])),
+      };
     },
     async getLogs(filter) {
       const logs = await client.request({
@@ -101,21 +141,9 @@ export function createChainReader(rpcUrls: readonly string[]): ChainReader {
         logIndex: Number(log.logIndex as string),
       }));
     },
-    async getTransactionSender(hash) {
-      const cached = senderCache.get(hash);
-      if (cached !== undefined) return cached;
-      try {
-        const tx = await client.getTransaction({ hash });
-        senderCache.set(hash, tx.from);
-        if (senderCache.size > 5_000) senderCache.clear();
-        return tx.from;
-      } catch {
-        return null;
-      }
-    },
     async readStockEnabled(factory, stock) {
       try {
-        const info = await client.readContract({ address: factory, abi: factoryStockAbi, functionName: 'stockInfo', args: [stock] });
+        const info = await registryClient.readContract({ address: factory, abi: factoryStockAbi, functionName: 'stockInfo', args: [stock] });
         return info.feed === '0x0000000000000000000000000000000000000000' ? null : info.enabled;
       } catch {
         return null;
@@ -157,7 +185,7 @@ export function createChainReader(rpcUrls: readonly string[]): ChainReader {
     },
     async readFeed(feed) {
       try {
-        const [, answer, , updatedAt] = await client.readContract({
+        const [, answer, , updatedAt] = await registryClient.readContract({
           address: feed,
           abi: feedAbi,
           functionName: 'latestRoundData',

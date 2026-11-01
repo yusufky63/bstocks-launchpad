@@ -14,15 +14,18 @@ import { TradePanel } from '@/components/trade/trade-panel';
 import { AddressLabel, AnimatedNumber, Banner, PriceChange, TimeAgo, TxLink, Named } from '@/components/ui/display';
 import { Badge, Button, KeyValue, Module, Skeleton, StatStrip, cx } from '@/components/ui/primitives';
 import { Sheet, StickyPanel } from '@/components/ui/sheet';
-import { bpsToPct, formatDateTime, formatNumber, formatPct, formatRatio, formatUsd, shortAddress } from '@/lib/format';
+import { bpsToPct, formatDateTime, formatNumber, formatPct, formatRatio, formatSupplyPct, formatUsd, shortAddress } from '@/lib/format';
 import { devBuyTier } from '@/lib/launch';
-import { qk, useSwaps, useToken } from '@/lib/queries';
+import { usePendingBurns, withPendingBurnMarket } from '@/lib/pending-burns';
+import { usePendingTrades, withPendingPrice, withPendingSwaps } from '@/lib/pending-trades';
+import { qk, useLiveTrades, useToken } from '@/lib/queries';
 import { useIsDesktop } from '@/lib/settings';
 import { telegramHandle } from '@/lib/profile';
 import { earlyTradeMarket } from '@/lib/trade-market';
 import { twitterHandle } from '@/lib/twitter';
 import type { LaunchInfo, MarketView, TokenResponse } from '@/lib/types';
 
+import { BurnButton } from './burn-button';
 import { ChartModule } from './chart-module';
 import { DexPaid } from './dex-paid';
 import { EditProfile } from './edit-profile';
@@ -59,7 +62,9 @@ export function TokenView({ address, initialData }: { address: string; initialDa
   // Keep the live trading panel mounted while someone enters an amount or confirms a swap.
   const view = (earlyTradeActive || (!isDesktop && mobileTrade)) && earlyView?.status === 'indexing' ? earlyView : liveView;
   const onEarlyEngagedChange = useCallback((engaged: boolean) => setEarlyTradeActive(engaged), []);
-  const swaps = useSwaps(address, view.status === 'indexed');
+  const swaps = useLiveTrades(address, view.status === 'indexed');
+  const pending = usePendingTrades(address);
+  const burnsPending = usePendingBurns(address);
 
   if (view.status === 'pending') {
     return (
@@ -121,10 +126,11 @@ export function TokenView({ address, initialData }: { address: string; initialDa
       </div>
     );
   }
-  const market = view.market;
+  // Priced at this browser's own trade, and counting its own burns, until the indexed market catches up.
+  const market = withPendingBurnMarket(withPendingPrice(view.market, pending), burnsPending);
   const details = view.details;
   const { launch, profile } = view;
-  const creatorSwaps = (swaps.data?.swaps ?? []).filter((s) => s.isCreator);
+  const creatorSwaps = withPendingSwaps(swaps.data?.swaps ?? [], pending).filter((s) => s.isCreator);
   const closeMobileTrade = () => {
     setMobileTrade(false);
     if (search.get('trade')) router.replace(`/token/${market.token}`);
@@ -157,12 +163,20 @@ export function TokenView({ address, initialData }: { address: string; initialDa
                       <Badge tone="primary" className="hover:bg-primary/15 transition-fast">creator <Named address={market.creator} /></Badge>
                     </Link>
                     <DevBuyChip launch={launch} market={market} />
+                    {market.burns > 0 && (
+                      <Link href={`/token/${market.token}?tab=burns#records`} className="inline-flex">
+                        <Badge tone="danger" title={`${formatNumber(market.burned, 0)} ${market.symbol} sent to 0x…dEaD in ${market.burns} ${market.burns === 1 ? 'burn' : 'burns'}`}>
+                          Burned {formatSupplyPct(market.burnedPercent)}
+                        </Badge>
+                      </Link>
+                    )}
                     <DexPaid token={market.token} />
                     {profile?.onchain === 'locked' && <Badge title="The creator gave up editing for good.">Profile locked</Badge>}
                   </div>
                 </div>
               </div>
               <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+                <BurnButton market={market} />
                 {/* Guarded again here: rows indexed before the URL check above can still hold junk. */}
                 {/* `URL.canParse` says nothing about the scheme: `javascript:` parses. */}
                 {safeExternalUrl(market.website) && <IconLink href={safeExternalUrl(market.website)!} label={new URL(safeExternalUrl(market.website)!).hostname} icon={<Globe size={14} strokeWidth={1.75} />} />}
@@ -202,7 +216,7 @@ export function TokenView({ address, initialData }: { address: string; initialDa
             </div>
           </Module>
 
-          <Module>
+          <Module id="records" className="scroll-mt-20">
             <TokenRecords market={market} launch={launch} profile={profile} links={details?.links} trades={details?.lifetime.trades} fees={<FeesPanel details={details} market={market} />} />
           </Module>
         </div>

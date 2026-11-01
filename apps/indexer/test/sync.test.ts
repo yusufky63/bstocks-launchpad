@@ -4,8 +4,15 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   BASE_CONTRACTS,
   BASE_STOCKS,
+  CONTRACT_URI_CHANGED_TOPIC,
+  CREATOR_BOUGHT_TOPIC,
   decodeLaunched,
   ERC20_TRANSFER_TOPIC,
+  FEE_CHARGED_TOPIC,
+  FEES_CLAIMED_TOPIC,
+  LAUNCHED_TOPIC,
+  METADATA_EDITABLE_TOPIC,
+  METADATA_LOCKED_TOPIC,
   openingPriceUsd,
   stockPairFactoryAbi,
   stockPairHookAbi,
@@ -32,9 +39,10 @@ import {
 } from '@stockpair/core/db';
 
 import type { ChainReader } from '../src/chain-reader';
+import { HeadClock } from '../src/head-clock';
 import { backfillMetadata, fetchMetadata, gatewayUrl, metadataWorker, normalizeTelegram, normalizeTwitter, parseMetadata } from '../src/metadata';
 import { refreshStockQuotes } from '../src/quotes';
-import { catchUpDeployments, DeploymentMismatchError, needsMetadataFetch, syncOnce } from '../src/sync';
+import { catchUpDeployments, DeploymentMismatchError, INDEXED_TOPICS, MERGED_LOG_RANGE, needsMetadataFetch, nextBlockAfter, syncOnce } from '../src/sync';
 
 const FACTORY = '0x00000000000000000000000000000000000000f1' as Address;
 const HOOK = '0x00000000000000000000000000000000000000c4' as Address;
@@ -67,14 +75,18 @@ class FakeChain implements ChainReader {
   /** The factory each stock's enabled flag was read from. */
   stockReads: Address[] = [];
 
-  /** Highest number of reads of each kind the indexer had outstanding at once. */
-  peak = { block: 0, sender: 0 };
-  private open = { block: 0, sender: 0 };
+  /** Highest number of reads of each kind (and of both together) the indexer had outstanding at once. */
+  peak = { block: 0, full: 0, both: 0 };
+  private open = { block: 0, full: 0 };
+  /** Every eth_blockNumber and every block read with its transactions, counted. */
+  headReads = 0;
+  fullReads: bigint[] = [];
 
   /** Suspends once so overlapping reads are visible in `peak` the way a real transport sees them. */
-  private async gate<T>(kind: 'block' | 'sender', value: T): Promise<T> {
+  private async gate<T>(kind: 'block' | 'full', value: T): Promise<T> {
     this.open[kind] += 1;
     this.peak[kind] = Math.max(this.peak[kind], this.open[kind]);
+    this.peak.both = Math.max(this.peak.both, this.open.block + this.open.full);
     await Promise.resolve();
     this.open[kind] -= 1;
     return value;
@@ -89,16 +101,36 @@ class FakeChain implements ChainReader {
   }
 
   async getBlockNumber() {
+    this.headReads += 1;
     return this.head;
   }
 
+  private header(number: bigint): Block {
+    if (number > this.head) throw new Error(`block ${number} is past the head`);
+    return { number, hash: this.hashOf(number), parentHash: this.hashOf(number - 1n), timestamp: 1_757_000_000n + number * 2n };
+  }
+
   async getBlock(number: bigint): Promise<Block> {
-    return this.gate('block', {
-      number,
-      hash: this.hashOf(number),
-      parentHash: this.hashOf(number - 1n),
-      timestamp: 1_757_000_000n + number * 2n,
-    });
+    return this.gate('block', this.header(number));
+  }
+
+  async findBlock(number: bigint): Promise<Block | null> {
+    return number > this.head ? null : this.getBlock(number);
+  }
+
+  async getBlockWithSenders(number: bigint) {
+    this.fullReads.push(number);
+    const senders = new Map<Hex, Address>();
+    for (const log of this.logs.get(number) ?? []) {
+      const sender = log.transactionHash ? this.senders.get(log.transactionHash) : undefined;
+      if (sender) senders.set(log.transactionHash!.toLowerCase() as Hex, sender);
+    }
+    return this.gate('full', { block: this.header(number), senders });
+  }
+
+  /** The clock a running indexer would read: wall time at this chain's head. */
+  now(): number {
+    return Number(1_757_000_000n + this.head * 2n) * 1000;
   }
 
   async getLogs(filter: LogFilter) {
@@ -129,10 +161,6 @@ class FakeChain implements ChainReader {
       }
     }
     return out;
-  }
-
-  async getTransactionSender(hash: Hex) {
-    return this.gate('sender', this.senders.get(hash) ?? null);
   }
 
   enabledOverrides = new Map<string, boolean>();
@@ -433,7 +461,7 @@ describe('syncOnce', () => {
 
   it('continues from the cursor and is idle when caught up', async () => {
     const result = await sync();
-    expect(result).toMatchObject({ status: 'idle', nextBlock: 1_025n, safeBlock: 1_024n });
+    expect(result).toMatchObject({ status: 'idle', head: 1_030n, nextBlock: 1_025n, safeBlock: 1_024n });
   });
 
   it('detects a reorg of the last block, rolls back and re-indexes', async () => {
@@ -461,9 +489,10 @@ describe('syncOnce', () => {
     expect((await readCursor(db))?.last_block_hash).toBe(chain.hashOf(1_034n));
   });
 
-  it('reads a busy range\'s blocks and senders together instead of one at a time', async () => {
-    // A range whose every block carries a trade: read serially this is one round trip per block
-    // plus one per transaction, which is what put the indexer behind the chain.
+  it('reads a busy range\'s blocks with their senders, one request per block, all at once', async () => {
+    // A range whose every block carries a trade: read serially this is one round trip per block,
+    // which is what put the indexer behind the chain. Each block's transactions name its swaps'
+    // senders, so a trade costs no request of its own.
     for (let i = 0; i < 30; i += 1) {
       const block = 1_035n + BigInt(i);
       const tx = `0xdddd${i.toString(16).padStart(60, '0')}` as Hex;
@@ -473,13 +502,17 @@ describe('syncOnce', () => {
       chain.senders.set(tx, TRADER);
     }
     chain.head = 1_075n;
-    chain.peak = { block: 0, sender: 0 };
+    chain.peak = { block: 0, full: 0, both: 0 };
+    chain.fullReads = [];
 
     const result = await sync();
     expect(result).toMatchObject({ status: 'progressed', fromBlock: 1_035n, swaps: 30, transfers: 30 });
-    // 30 blocks and 30 transactions, all in flight at once rather than 60 sequential waits.
-    expect(chain.peak.block).toBeGreaterThanOrEqual(30);
-    expect(chain.peak.sender).toBe(30);
+    // The 30 trade blocks, each read once with its transactions, all in flight together.
+    expect([...chain.fullReads].sort((a, b) => Number(a - b))).toEqual(Array.from({ length: 30 }, (_, i) => 1_035n + BigInt(i)));
+    expect(chain.peak.full).toBe(30);
+    const busy = (await listSwaps(db, { token: TOKEN, limit: 200 })).filter((s) => s.tx_hash.startsWith('0xdddd'));
+    expect(busy).toHaveLength(30);
+    expect(busy.every((s) => s.trader === TRADER.toLowerCase())).toBe(true);
   });
 });
 
@@ -622,13 +655,21 @@ describe('metadata', () => {
 });
 
 describe('needsMetadataFetch', () => {
-  const progressed = { status: 'progressed', fromBlock: 1n, toBlock: 2n, launches: 0, swaps: 3, transfers: 3, metadataUpdates: 0, deploymentsBehind: [] } as const;
+  const progressed = { status: 'progressed', head: 8n, fromBlock: 1n, toBlock: 2n, launches: 0, swaps: 3, transfers: 3, metadataUpdates: 0, deploymentsBehind: [] } as const;
   it('asks for a fetch after new launches or new onchain profile changes, and not otherwise', () => {
     expect(needsMetadataFetch(progressed)).toBe(false);
     expect(needsMetadataFetch({ ...progressed, launches: 1 })).toBe(true);
     expect(needsMetadataFetch({ ...progressed, metadataUpdates: 1 })).toBe(true);
-    expect(needsMetadataFetch({ status: 'idle', nextBlock: 1n, safeBlock: 0n })).toBe(false);
-    expect(needsMetadataFetch({ status: 'reorg', rolledBackTo: 1n })).toBe(false);
+    expect(needsMetadataFetch({ status: 'idle', head: 2n, nextBlock: 1n, safeBlock: 0n })).toBe(false);
+    expect(needsMetadataFetch({ status: 'reorg', head: 2n, rolledBackTo: 1n })).toBe(false);
+  });
+});
+
+describe('nextBlockAfter', () => {
+  it('reads where the pass left the cursor, so the health readout needs no second database read', () => {
+    expect(nextBlockAfter({ status: 'progressed', head: 40n, fromBlock: 10n, toBlock: 34n, launches: 0, swaps: 0, transfers: 0, metadataUpdates: 0, deploymentsBehind: [] })).toBe(35n);
+    expect(nextBlockAfter({ status: 'idle', head: 40n, nextBlock: 35n, safeBlock: 34n })).toBe(35n);
+    expect(nextBlockAfter({ status: 'reorg', head: 40n, rolledBackTo: 13n })).toBe(13n);
   });
 });
 
@@ -886,14 +927,16 @@ describe('onchain profile changes', () => {
     c.hashSalt.set(1_036n, 'reorged');
     c.hashSalt.set(1_044n, 'reorged');
 
-    expect(await syncP()).toMatchObject({ status: 'reorg', rolledBackTo: 1_035n });
+    // Block 1035 is stored (the pass read it for its reorg check) and still canonical, so the
+    // rollback starts right at 1036, where the chains part.
+    expect(await syncP()).toMatchObject({ status: 'reorg', rolledBackTo: 1_036n });
     expect(await readMarket(pdb, T)).toMatchObject({
       current_contract_uri: 'ipfs://bafyfirst',
       metadata_locked_at: null,
       metadata_fetched_at: null,
       profile_updates: 1,
     });
-    expect(await syncP()).toMatchObject({ status: 'progressed', fromBlock: 1_035n, metadataUpdates: 0 });
+    expect(await syncP()).toMatchObject({ status: 'progressed', fromBlock: 1_036n, metadataUpdates: 0 });
 
     requested.length = 0;
     expect(await backfillMetadata(pdb, GATEWAY, gatewayFetch())).toBe(1);
@@ -1471,5 +1514,204 @@ describe('metadata backfill limits', () => {
     expect(worker.kickIfDue(20, 160_000)).toBe(true);
     await worker.settled();
     expect(limits).toEqual([20, 20, 5, 20]);
+  });
+});
+
+// -------------------------------------------------------------------------------------------------
+// Near the head, one log request per pass
+// -------------------------------------------------------------------------------------------------
+
+describe('reading near the head in one request', () => {
+  const T1 = '0xb2000000000000000000000000000000000000e1' as Address;
+  const T2 = '0xb2000000000000000000000000000000000000e2' as Address;
+  const T3 = '0xb2000000000000000000000000000000000000e3' as Address;
+  const P1 = `0x${'e1'.repeat(32)}` as Hex;
+  const P2 = `0x${'e2'.repeat(32)}` as Hex;
+  const P3 = `0x${'e3'.repeat(32)}` as Hex;
+  const FOREIGN_POOL = `0x${'ff'.repeat(32)}` as Hex;
+
+  /** Launches with and without a buy, router buys, a fee claim, a profile change and a wallet transfer, among other pools' swaps. */
+  function build(c: FakeChain) {
+    addLaunch(c, 1_003n, { deployment, token: T1, poolId: P1, creator: CREATOR, txHash: txOf('n-l1'), editable: true, buy: { stockIn: 400_000_000n, tokensOut: 9n * 10n ** 25n } });
+    c.senders.set(txOf('n-l1'), CREATOR);
+    // A swap on somebody else's v4 pool in the same block: the wide request returns it, the pass must not keep it.
+    c.add(1_003n, swapLog(...amounts(10n ** 20n, -1_000n), OPENING_SQRT, txOf('n-foreign'), 20, { poolId: FOREIGN_POOL }));
+    addRouterBuy(c, 1_005n, { hook: HOOK, token: T1, poolId: P1, to: TRADER, stockIn: 50_000_000n, tokensOut: 10n ** 24n, txHash: txOf('n-b1') });
+    c.senders.set(txOf('n-b1'), TRADER);
+    // A launch and a buy of it a block apart, both inside one short range.
+    addLaunch(c, 1_008n, { deployment, token: T2, poolId: P2, creator: TRADER, txHash: txOf('n-l2') });
+    addRouterBuy(c, 1_009n, { hook: HOOK, token: T2, poolId: P2, to: CREATOR, stockIn: 20_000_000n, tokensOut: 5n * 10n ** 23n, txHash: txOf('n-b2') });
+    c.senders.set(txOf('n-b2'), CREATOR);
+    c.add(1_011n, transferLog(T1, TRADER, CREATOR, 10n ** 23n, txOf('n-gift'), 0));
+    c.add(1_012n, feesClaimedLog(HOOK, CREATOR, 1_000n, txOf('n-claim'), 0));
+    c.add(1_014n, contractUriChangedLog(FACTORY, T1, 'ipfs://bafynear', txOf('n-uri'), 0));
+    addLaunch(c, 1_016n, { deployment, token: T3, poolId: P3, creator: CREATOR, txHash: txOf('n-l3'), buy: { stockIn: 10_000_000n, tokensOut: 10n ** 24n } });
+    c.senders.set(txOf('n-l3'), CREATOR);
+    c.add(1_017n, swapLog(...amounts(10n ** 20n, -1_000n), OPENING_SQRT, txOf('n-foreign-2'), 0, { poolId: FOREIGN_POOL }));
+    c.head = 1_030n;
+  }
+
+  const TABLES: [string, string][] = [
+    ['launches', 'token'],
+    ['swaps', 'tx_hash, log_index'],
+    ['transfers', 'tx_hash, log_index'],
+    ['balances', 'token, holder'],
+    ['fee_events', 'tx_hash, log_index'],
+    ['fee_claims', 'tx_hash, log_index'],
+    ['metadata_updates', 'tx_hash, log_index'],
+    ['candles', 'token, bucket'],
+  ];
+
+  const syncWith = (d: Db, c: FakeChain, maxRange: number) => syncOnce({ db: d, chain: c, deployments: [deployment], confirmations: 6, maxRange });
+
+  it('stores exactly what the narrow requests store', async () => {
+    const wide = new FakeChain();
+    build(wide);
+    const wideDb = await freshDb();
+    expect(await syncWith(wideDb, wide, 50)).toMatchObject({ status: 'progressed', fromBlock: 1_000n, toBlock: 1_024n });
+    // A range of 25 blocks is past the merged limit: no request filtered on a list of first topics.
+    expect(wide.calls.some((call) => Array.isArray(call.topics?.[0]))).toBe(false);
+
+    const near = new FakeChain();
+    build(near);
+    const nearDb = await freshDb();
+    let passes = 0;
+    while ((await syncWith(nearDb, near, 2)).status === 'progressed') passes += 1;
+    expect(passes).toBeGreaterThan(10);
+    expect(near.calls.every((call) => Array.isArray(call.topics?.[0]) || (Array.isArray(call.address) && call.topics?.[0] === ERC20_TRANSFER_TOPIC))).toBe(true);
+
+    for (const [table, order] of TABLES) {
+      const a = await wideDb.query(`SELECT * FROM ${table} ORDER BY ${order}`);
+      const b = await nearDb.query(`SELECT * FROM ${table} ORDER BY ${order}`);
+      expect(a.length, table).toBeGreaterThan(0);
+      expect(b, table).toEqual(a);
+    }
+    // The other pool's swaps came back in the wide answers and were left out.
+    expect(await nearDb.query('SELECT 1 FROM swaps WHERE pool_id = $1', [FOREIGN_POOL])).toHaveLength(0);
+    await wideDb.close();
+    await nearDb.close();
+  });
+
+  it('asks once per quiet pass, once more for a token launched in it, and reads one block for a one-block range', async () => {
+    const c = new FakeChain();
+    build(c);
+    const d = await freshDb();
+    await syncWith(d, c, 50);
+    let blockReads = 0;
+    const getBlock = c.getBlock.bind(c);
+    c.getBlock = async (n: bigint) => {
+      blockReads += 1;
+      return getBlock(n);
+    };
+
+    // Two quiet blocks: one log request, the start block (reorg check) and the end block (cursor).
+    c.head = 1_032n;
+    c.calls = [];
+    expect(await syncWith(d, c, 2)).toMatchObject({ status: 'progressed', fromBlock: 1_025n, toBlock: 1_026n });
+    expect(c.calls).toHaveLength(1);
+    expect(c.calls[0]!.topics).toEqual([[...INDEXED_TOPICS]]);
+    expect(blockReads).toBe(2);
+
+    // One block: its reorg check is its only block read.
+    c.head = 1_033n;
+    c.calls = [];
+    blockReads = 0;
+    expect(await syncWith(d, c, 2)).toMatchObject({ fromBlock: 1_027n, toBlock: 1_027n });
+    expect(c.calls).toHaveLength(1);
+    expect(blockReads).toBe(1);
+
+    // A launch in the range: its mint and seed come from one more request for that token alone.
+    const T4 = '0xb2000000000000000000000000000000000000e4' as Address;
+    addLaunch(c, 1_028n, { deployment, token: T4, poolId: `0x${'e4'.repeat(32)}` as Hex, creator: CREATOR, txHash: txOf('n-l4') });
+    c.head = 1_035n;
+    c.calls = [];
+    expect(await syncWith(d, c, 2)).toMatchObject({ launches: 1, transfers: 2 });
+    expect(c.calls).toHaveLength(2);
+    expect(c.calls[1]!.address).toEqual([T4.toLowerCase()]);
+    expect((await listHolders(d, T4)).map((h) => h.holder)).toContain(BASE_CONTRACTS.poolManager.toLowerCase());
+    await d.close();
+  });
+
+  it('filters on every event a decoder reads', () => {
+    for (const topic of [LAUNCHED_TOPIC, CREATOR_BOUGHT_TOPIC, METADATA_EDITABLE_TOPIC, CONTRACT_URI_CHANGED_TOPIC, METADATA_LOCKED_TOPIC, FEE_CHARGED_TOPIC, FEES_CLAIMED_TOPIC, UNISWAP_V4_SWAP_TOPIC, ERC20_TRANSFER_TOPIC]) {
+      expect(INDEXED_TOPICS).toContain(topic);
+    }
+    expect(MERGED_LOG_RANGE).toBeGreaterThan(2n);
+  });
+
+  it('reads the head off the clock once it has seen a block, and stores what node-led passes store', async () => {
+    const led = new FakeChain();
+    build(led);
+    const ledDb = await freshDb();
+    while ((await syncWith(ledDb, led, 4)).status === 'progressed');
+
+    const timed = new FakeChain();
+    build(timed);
+    const timedDb = await freshDb();
+    const clock = new HeadClock(() => timed.now());
+    const syncTimed = () => syncOnce({ db: timedDb, chain: timed, deployments: [deployment], confirmations: 6, maxRange: 4, clock });
+    let passes = 0;
+    while ((await syncTimed()).status === 'progressed') passes += 1;
+    expect(passes).toBeGreaterThan(5);
+    // Only the first pass, before any block had been seen, asked the node.
+    expect(timed.headReads).toBe(1);
+    expect((await readCursor(timedDb))?.next_block).toBe((await readCursor(ledDb))?.next_block);
+    for (const [table, order] of TABLES) {
+      expect(await timedDb.query(`SELECT * FROM ${table} ORDER BY ${order}`), table).toEqual(
+        await ledDb.query(`SELECT * FROM ${table} ORDER BY ${order}`),
+      );
+    }
+    await ledDb.close();
+    await timedDb.close();
+  });
+
+  it('asks the node when the clock runs ahead of it, and never reads past what the node has', async () => {
+    const c = new FakeChain();
+    build(c);
+    const d = await freshDb();
+    let now = c.now();
+    const clock = new HeadClock(() => now);
+    const syncTimed = () => syncOnce({ db: d, chain: c, deployments: [deployment], confirmations: 6, maxRange: 50, clock });
+    expect(await syncTimed()).toMatchObject({ status: 'progressed', toBlock: 1_024n });
+
+    // The sequencer stalls for a minute: the clock counts thirty more blocks, the node has none.
+    now += 60_000;
+    c.headReads = 0;
+    c.calls = [];
+    expect(await syncTimed()).toMatchObject({ status: 'idle', head: 1_030n, nextBlock: 1_025n });
+    expect(c.headReads).toBe(1);
+    expect(c.calls).toHaveLength(0);
+
+    // Blocks come again, fewer than the clock counts: the pass reads up to the node's head, no further.
+    c.head = 1_040n;
+    expect(await syncTimed()).toMatchObject({ status: 'progressed', fromBlock: 1_025n, toBlock: 1_034n });
+    expect((await readCursor(d))?.last_block_hash).toBe(c.hashOf(1_034n));
+    await d.close();
+  });
+});
+
+describe('HeadClock', () => {
+  const at = (number: bigint) => 1_757_000_000n + number * 2n;
+
+  it('knows nothing until it has seen a block', () => {
+    expect(new HeadClock(() => 0).estimate()).toBeNull();
+  });
+
+  it('counts a block every two seconds from the newest block it has seen', () => {
+    let now = Number(at(100n)) * 1000;
+    const clock = new HeadClock(() => now);
+    clock.observe({ number: 100n, timestamp: at(100n) });
+    expect(clock.estimate()).toBe(100n);
+    now += 9_999;
+    expect(clock.estimate()).toBe(104n);
+    // An older block does not move the anchor back.
+    clock.observe({ number: 90n, timestamp: at(90n) });
+    expect(clock.estimate()).toBe(104n);
+  });
+
+  it('does not count backwards when the clock is behind the block', () => {
+    const clock = new HeadClock(() => Number(at(100n)) * 1000 - 30_000);
+    clock.observe({ number: 100n, timestamp: at(100n) });
+    expect(clock.estimate()).toBe(100n);
   });
 });

@@ -6,7 +6,7 @@ import { BASE_CONTRACTS, findStock, stockPairHookAbi } from '@stockpair/core';
 import { readMarket, tokenFeeSummary, tokenLifetime, type Db } from '@stockpair/core/db';
 
 import { cached, TTL } from './cache.server';
-import { getPublicClient, serverDeployments } from './chain.server';
+import { getLightClient, serverDeployments } from './chain.server';
 import { hookOf } from './deployments';
 import { poolReserves } from './liquidity';
 import { toLaunchInfo, toMarketView, toProfileInfo, type MarketView } from './market-view';
@@ -44,11 +44,14 @@ export async function readMarketCached(db: Db, token: string): Promise<MarketVie
   return (await readTokenCached(db, token))?.market ?? null;
 }
 
-/** Pool price and the current fee from the token's own hook, straight from the chain (memoised for a few seconds). */
+/**
+ * Pool price and the current fee from the token's own hook, straight from the chain (memoised for a
+ * few seconds). Shown, never traded on, so the free endpoints carry it; quotes read their own.
+ */
 async function readPoolState(poolId: Hex, hook: Address | null): Promise<{ sqrtPriceX96: bigint; feeBps: number } | null> {
   if (!hook) return null;
   return cached(`pool:${poolId}`, TTL.chain, async () => {
-    const client = getPublicClient();
+    const client = getLightClient();
     const [slot0, feeBps] = await Promise.all([
       client.readContract({ address: BASE_CONTRACTS.stateView, abi: stateViewAbi, functionName: 'getSlot0', args: [poolId] }),
       client.readContract({ address: hook, abi: stockPairHookAbi, functionName: 'currentFeeBps', args: [poolId] }),
@@ -61,7 +64,7 @@ async function readPoolState(poolId: Hex, hook: Address | null): Promise<{ sqrtP
 async function readCreatorClaimable(stock: Address, creator: Address, hook: Address | null): Promise<bigint | null> {
   if (!hook) return null;
   return cached(`claimable:${hook}:${stock}:${creator}`, TTL.chain, async () => {
-    const client = getPublicClient();
+    const client = getLightClient();
     return client.readContract({ address: hook, abi: stockPairHookAbi, functionName: 'claimable', args: [stock, creator] });
   }).catch(() => null);
 }

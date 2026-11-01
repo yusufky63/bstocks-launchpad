@@ -3,8 +3,8 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { ArrowUpRight } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { erc20Abi, type Address, type Hash } from 'viem';
-import { useAccount, useReadContracts } from 'wagmi';
+import { erc20Abi, type Address, type Hash, type TransactionReceipt } from 'viem';
+import { useAccount, usePublicClient, useReadContracts } from 'wagmi';
 import { base } from 'wagmi/chains';
 
 import { formatAmount, parseAmount } from '@stockpair/core';
@@ -18,6 +18,7 @@ import { Button, KeyValue, cx } from '@/components/ui/primitives';
 import { deploymentOf } from '@/lib/deployments';
 import { publicEnv } from '@/lib/env';
 import { bpsToPct, formatPct, formatRatio, formatUsd } from '@/lib/format';
+import { addPendingTrades, tradesFromReceipt } from '@/lib/pending-trades';
 import { qk, useQuote } from '@/lib/queries';
 import { impactLevel, useSlippage } from '@/lib/settings';
 import { minOutFor, shareOf } from '@/lib/trade';
@@ -33,6 +34,7 @@ export function TradePanel({ market, initialSide = 'buy', onTraded, onEngagedCha
   // Trades go through the router of the deployment that launched this token, not the newest one.
   const deployment = deploymentOf(publicEnv.deployments, market);
   const { address, isConnected, chainId } = useAccount();
+  const publicClient = usePublicClient({ chainId: base.id });
   const queryClient = useQueryClient();
   const [side, setSide] = useState<'buy' | 'sell'>(initialSide);
   const [amountText, setAmountText] = useState('');
@@ -126,7 +128,22 @@ export function TradePanel({ market, initialSide = 'buy', onTraded, onEngagedCha
   );
   const ctaLabel = buy ? `Buy ${market.symbol}${inputUsd !== null ? ` · ${formatUsd(inputUsd)}` : ''}` : `Sell ${market.symbol}${inputUsd !== null ? ` · ≈ ${formatUsd(inputUsd)}` : ''}`;
 
-  const onDone = (hash: Hash) => {
+  // The trade is on the chart, the price and the trades list from its receipt, without waiting for
+  // the indexer; the block's timestamp is read so it lands in the candle the indexer will put it in.
+  const showFromReceipt = async (receipt: TransactionReceipt) => {
+    const { poolId, creator } = market;
+    if (!poolId || !creator || !publicClient) return;
+    try {
+      const block = await publicClient.getBlock({ blockNumber: receipt.blockNumber });
+      const trades = tradesFromReceipt(receipt, { token: market.token, poolId, creator, hook: market.hook, stock: market.stock, stockUsd }, new Date(Number(block.timestamp) * 1000));
+      addPendingTrades(market.token, trades, stockUsd);
+    } catch {
+      // Nothing is lost: the indexer brings the trade in on its own a few seconds later.
+    }
+  };
+
+  const onDone = (hash: Hash, receipt: TransactionReceipt | null) => {
+    if (receipt) void showFromReceipt(receipt);
     setLastTx(hash);
     // Close the sheet explicitly. It used to unmount because clearing the amount removed the quote
     // that kept it mounted, which took the success screen and the transaction hash with it.

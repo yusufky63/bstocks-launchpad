@@ -48,6 +48,15 @@ export type MarketView = {
   lastTradeAt: string | null;
   txHash: string;
   blockNumber: string;
+  /**
+   * Whole tokens holders sent to the burn address (launch dust excluded) and their share of the
+   * fixed supply. FDV stays on the full supply: the token contract's total supply does not change.
+   */
+  burned: number;
+  burnedPercent: number;
+  burns: number;
+  /** Block of the newest burn, null when nobody has burned. */
+  lastBurnBlock: string | null;
 };
 
 const SUPPLY = 1_000_000_000;
@@ -161,7 +170,16 @@ export function toMarketView(row: MarketRow, now = new Date()): MarketView {
     lastTradeAt: row.last_trade_at ? new Date(row.last_trade_at).toISOString() : null,
     txHash: row.tx_hash,
     blockNumber: String(row.block_number),
+    burned: Number(row.burned_raw ?? '0') / 1e18,
+    burnedPercent: supplyPercent(row.burned_raw ?? '0'),
+    burns: Number(row.burns ?? 0),
+    lastBurnBlock: row.last_burn_block === null || row.last_burn_block === undefined ? null : String(row.last_burn_block),
   };
+}
+
+/** A raw token amount as a percentage of the fixed supply, exact to a millionth of a percent. */
+export function supplyPercent(raw: string | bigint): number {
+  return Number((BigInt(raw) * 100_000_000n) / SUPPLY_RAW) / 1_000_000;
 }
 
 /** The deployment that launched the token and the creator's buy at launch, if any. */

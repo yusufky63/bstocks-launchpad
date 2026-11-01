@@ -3,14 +3,15 @@ import 'server-only';
 import type { Address } from 'viem';
 
 import { findStock } from '@stockpair/core';
-import { listHoldings, listMarkets, listSwaps, type Db } from '@stockpair/core/db';
+import { listBurns, listHoldings, listMarkets, listSwaps, type Db } from '@stockpair/core/db';
 
+import { toBurnView } from './burns.server';
 import { API_BUDGET_MS, cached, TTL, withTimeout } from './cache.server';
 import { toMarketView, type MarketView } from './market-view';
 import { readClaimable } from './onchain.server';
 import { readCreatorOverview } from './stats.server';
 import { readStocksResponse } from './stocks.server';
-import type { CreatorOverview } from './types';
+import type { BurnView, CreatorOverview } from './types';
 
 export type WalletSummary = {
   wallet: string;
@@ -25,6 +26,8 @@ export type WalletSummary = {
   /** Null while any hook is unread: a total of the ones that answered would understate it. */
   claimableUsd: number | null;
   recentSwaps: { txHash: string; token: string; name: string; symbol: string; side: 'buy' | 'sell'; amountToken: number; amountStock: number; amountUsd: number | null; stockSymbol: string; blockTime: string; isCreator: boolean }[];
+  /** Tokens this wallet sent to the burn address, newest first. */
+  burns: BurnView[];
   creator: CreatorOverview;
 };
 
@@ -36,13 +39,14 @@ export async function readWalletSummary(db: Db, wallet: string): Promise<WalletS
   return withTimeout(
     cached(`wallet:${wallet}`, TTL.list, async () => {
     const now = new Date();
-    const [createdRows, holdingRows, swaps, claimableRaw, creator, stocks] = await Promise.all([
+    const [createdRows, holdingRows, swaps, claimableRaw, creator, stocks, burnRows] = await Promise.all([
       listMarkets(db, { creator: wallet, limit: 200 }),
       listHoldings(db, wallet),
       listSwaps(db, { trader: wallet, limit: 100 }),
       readClaimable(wallet as Address).catch(() => null),
       readCreatorOverview(db, wallet),
       readStocksResponse(),
+      listBurns(db, { burner: wallet, limit: 50 }),
     ]);
     // Stock prices are a lookup here, not the subject: if the registry read timed out the wallet
     // still renders, with USD figures falling back to null rather than the page failing.
@@ -114,6 +118,7 @@ export async function readWalletSummary(db: Db, wallet: string): Promise<WalletS
           isCreator: row.is_creator,
         };
       }),
+      burns: burnRows.map(toBurnView),
       creator,
     };
     }),

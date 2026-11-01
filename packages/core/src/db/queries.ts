@@ -5,6 +5,20 @@ import type { Db, Row } from './client';
 /** The v4 PoolManager custodies every pool's tokens; it is never a holder. */
 const POOL_MANAGER = BASE_CONTRACTS.poolManager.toLowerCase();
 
+/**
+ * Where burned tokens go. B20 tokens here have no burn role (no admin, ever), so a burn is a plain
+ * transfer to this address, whose key nobody holds; the token contract's total supply does not
+ * change. Stored lowercase, like every address in the database.
+ */
+export const BURN_ADDRESS = '0x000000000000000000000000000000000000dead';
+
+/**
+ * Transfers that count as burns. The launch itself sends a few wei of rounding dust here from the
+ * factory, in the launch transaction; that is bookkeeping, not anyone burning, so it is left out.
+ * Expects the transfer as `t` and its launch as `l`.
+ */
+const IS_BURN = `t.to_address = '${BURN_ADDRESS}' AND t.tx_hash <> l.tx_hash`;
+
 // ---------------------------------------------------------------------------------------------
 // Row types (all bigint/numeric columns are strings; timestamps are Date)
 // ---------------------------------------------------------------------------------------------
@@ -136,6 +150,11 @@ export type MarketRow = LaunchRow & {
   /** Onchain contract URI changes, and when the last one landed. */
   profile_updates: number;
   profile_updated_onchain_at: Date | null;
+  /** Tokens holders have sent to the burn address, launch dust excluded, and how many burns. */
+  burned_raw: string;
+  burns: number;
+  /** Block of the newest burn; NULL when nobody has burned. */
+  last_burn_block: string | null;
 };
 
 export type CursorRow = { next_block: string; last_block_hash: string | null; updated_at: Date };
@@ -1120,7 +1139,9 @@ const MARKET_SELECT = `
     coalesce(vol.trades_all, 0)::int AS trades_all,
     coalesce(h.holder_count, 0)::int AS holder_count,
     cb.creator_buy_stock_raw, cb.creator_buy_fee_raw, cb.creator_buy_token_raw,
-    coalesce(mu.profile_updates, 0)::int AS profile_updates, mu.profile_updated_onchain_at
+    coalesce(mu.profile_updates, 0)::int AS profile_updates, mu.profile_updated_onchain_at,
+    coalesce(bu.burned_raw, 0)::numeric(40,0) AS burned_raw, coalesce(bu.burns, 0)::int AS burns,
+    bu.last_burn_block
   FROM launches l
   JOIN stocks s ON s.address = l.stock
   LEFT JOIN stock_quotes q ON q.stock = l.stock
@@ -1166,7 +1187,12 @@ const MARKET_SELECT = `
     SELECT count(*) FILTER (WHERE m.kind = 'uri') AS profile_updates,
            max(m.block_time) FILTER (WHERE m.kind = 'uri') AS profile_updated_onchain_at
     FROM metadata_updates m WHERE m.token = l.token
-  ) mu ON true`;
+  ) mu ON true
+  LEFT JOIN LATERAL (
+    -- Served by the partial burn index: a handful of rows per token, not every transfer.
+    SELECT sum(t.amount_raw) AS burned_raw, count(*) AS burns, max(t.block_number) AS last_burn_block
+    FROM transfers t WHERE t.token = l.token AND ${IS_BURN}
+  ) bu ON true`;
 
 export async function listMarkets(
   db: Db,
@@ -1398,6 +1424,125 @@ export async function holderConcentration(db: Db, token: string, poolManager: st
   return row!;
 }
 
+export type BurnRow = {
+  tx_hash: string;
+  log_index: number;
+  token: string;
+  burner: string;
+  amount_raw: string;
+  block_number: string;
+  block_time: Date;
+  name: string;
+  symbol: string;
+  image_uri: string | null;
+  stock: string;
+  stock_symbol: string;
+  stock_decimals: number;
+  /** The burner is the token's creator. */
+  is_creator: boolean;
+  /** Whole stock per whole token at the last trade at or before the burn; NULL when nothing had traded yet. */
+  price_at_burn: string | null;
+  /** The stock's USD quote (8 decimals) in effect at the burn, or the current one when none was recorded before it. */
+  stock_usd8_at_burn: string | null;
+};
+
+/**
+ * Burns, newest first, for one token, one burner, or the whole launchpad. Each row carries the
+ * token's price at its last trade before the burn and the stock quote in effect then, so a burn is
+ * valued at what the tokens were worth when they were burned, not at today's price.
+ */
+export async function listBurns(
+  db: Db,
+  options: { token?: string; burner?: string; limit?: number; beforeBlock?: bigint; beforeLogIndex?: number } = {},
+): Promise<BurnRow[]> {
+  const clauses = [IS_BURN];
+  const params: unknown[] = [];
+  if (options.token) {
+    params.push(options.token.toLowerCase());
+    clauses.push(`t.token = $${params.length}`);
+  }
+  if (options.burner) {
+    params.push(options.burner.toLowerCase());
+    clauses.push(`t.from_address = $${params.length}`);
+  }
+  if (options.beforeBlock !== undefined) {
+    if (options.beforeLogIndex !== undefined) {
+      params.push(options.beforeBlock.toString(), options.beforeLogIndex);
+      clauses.push(`(t.block_number, t.log_index) < ($${params.length - 1}, $${params.length})`);
+    } else {
+      params.push(options.beforeBlock.toString());
+      clauses.push(`t.block_number < $${params.length}`);
+    }
+  }
+  params.push(Math.min(Math.max(options.limit ?? 50, 1), 200));
+  return db.query<BurnRow>(
+    `SELECT t.tx_hash, t.log_index, t.token, t.from_address AS burner, t.amount_raw::numeric(40,0)::text AS amount_raw,
+            t.block_number, t.block_time, l.name, l.symbol,
+            CASE WHEN l.metadata_editable THEN l.image_uri ELSE COALESCE(p.image_uri, l.image_uri) END AS image_uri,
+            l.stock, st.symbol AS stock_symbol, st.decimals AS stock_decimals,
+            (t.from_address = l.creator) AS is_creator,
+            pr.price_token_in_stock AS price_at_burn,
+            coalesce(qh.price_usd8, q.price_usd8)::text AS stock_usd8_at_burn
+     FROM transfers t
+     JOIN launches l ON l.token = t.token
+     JOIN stocks st ON st.address = l.stock
+     LEFT JOIN token_profiles p ON p.token = l.token
+     LEFT JOIN stock_quotes q ON q.stock = l.stock
+     LEFT JOIN LATERAL (
+       SELECT s.price_token_in_stock FROM swaps s
+       WHERE s.token = t.token AND (s.block_number, s.log_index) <= (t.block_number, t.log_index)
+       ORDER BY s.block_number DESC, s.log_index DESC LIMIT 1
+     ) pr ON true
+     LEFT JOIN LATERAL (
+       SELECT h.price_usd8 FROM stock_quote_history h
+       WHERE h.stock = l.stock AND h.feed_updated_at <= t.block_time
+       ORDER BY h.feed_updated_at DESC LIMIT 1
+     ) qh ON true
+     WHERE ${clauses.join(' AND ')}
+     ORDER BY t.block_number DESC, t.log_index DESC
+     LIMIT $${params.length}`,
+    params,
+  );
+}
+
+export type TokenBurnsRow = {
+  burned_raw: string;
+  burns: number;
+  burners: number;
+  last_burn_at: Date | null;
+  last_burn_block: string | null;
+  top: { burner: string; burned_raw: string; burns: number }[];
+};
+
+/** One token's burns in total, and the wallets that burned the most. */
+export async function tokenBurns(db: Db, token: string, topLimit = 10): Promise<TokenBurnsRow> {
+  const t = token.toLowerCase();
+  const totals = db.query<Omit<TokenBurnsRow, 'top'>>(
+    `SELECT coalesce(sum(t.amount_raw), 0)::numeric(40,0)::text AS burned_raw, count(*)::int AS burns,
+            count(DISTINCT t.from_address)::int AS burners, max(t.block_time) AS last_burn_at,
+            max(t.block_number)::text AS last_burn_block
+     FROM transfers t JOIN launches l ON l.token = t.token
+     WHERE t.token = $1 AND ${IS_BURN}`,
+    [t],
+  );
+  const top = db.query<TokenBurnsRow['top'][number]>(
+    `SELECT t.from_address AS burner, sum(t.amount_raw)::numeric(40,0)::text AS burned_raw, count(*)::int AS burns
+     FROM transfers t JOIN launches l ON l.token = t.token
+     WHERE t.token = $1 AND ${IS_BURN}
+     GROUP BY t.from_address ORDER BY sum(t.amount_raw) DESC, t.from_address LIMIT $2`,
+    [t, Math.min(Math.max(topLimit, 1), 50)],
+  );
+  const [[head], leaders] = await Promise.all([totals, top]);
+  return {
+    burned_raw: head?.burned_raw ?? '0',
+    burns: head?.burns ?? 0,
+    burners: head?.burners ?? 0,
+    last_burn_at: head?.last_burn_at ?? null,
+    last_burn_block: head?.last_burn_block ?? null,
+    top: leaders,
+  };
+}
+
 export type TokenProfileRow = {
   token: string;
   description: string | null;
@@ -1581,7 +1726,8 @@ export async function creatorOverview(db: Db, creator: string): Promise<CreatorO
 }
 
 export type ActivityRow = {
-  kind: 'launch' | 'swap';
+  /** A burn carries its amount in `amount_token_raw` and no side or stock amount. */
+  kind: 'launch' | 'swap' | 'burn';
   at: Date;
   block_number: string;
   tx_hash: string;
@@ -1601,7 +1747,7 @@ export type ActivityRow = {
 };
 
 /**
- * Launches and swaps in one time-ordered feed, optionally for a single token or trader.
+ * Launches, swaps and burns in one time-ordered feed, optionally for a single token or actor.
  *
  * The image follows the token's one editing path: a creator-signed profile image wins for a fixed
  * profile, while an editable profile shows only what its onchain URI says.
@@ -1639,6 +1785,15 @@ export async function listActivity(
               (s.trader IS NOT NULL AND s.trader = l.creator)
        FROM swaps s JOIN launches l ON l.token = s.token JOIN stocks st ON st.address = l.stock
        LEFT JOIN token_profiles p ON p.token = l.token
+       UNION ALL
+       SELECT 'burn', t.block_time, t.block_number, t.tx_hash, t.log_index, t.token, l.name, l.symbol,
+              CASE WHEN l.metadata_editable THEN l.image_uri ELSE COALESCE(p.image_uri, l.image_uri) END,
+              l.stock, st.symbol, st.decimals,
+              t.from_address, NULL, t.amount_raw, NULL,
+              (t.from_address = l.creator)
+       FROM transfers t JOIN launches l ON l.token = t.token JOIN stocks st ON st.address = l.stock
+       LEFT JOIN token_profiles p ON p.token = l.token
+       WHERE ${IS_BURN}
      ) feed ${where}
      ORDER BY at DESC, block_number DESC, log_index DESC LIMIT $${params.length}`,
     params,
@@ -1657,6 +1812,16 @@ export type PlatformStatsRow = {
   volume_by_stock: (StockAmountRow & { day_raw: string })[];
   fees_by_stock: (StockAmountRow & { creator_raw: string; platform_raw: string })[];
   launches_by_stock: { stock: string; symbol: string; launches: number }[];
+  burns: number;
+  burners: number;
+  /** Tokens with at least one burn. */
+  tokens_burned: number;
+  /**
+   * USD the burned tokens were worth when burned: each burn at its token's last trade before it and
+   * the stock quote in effect then. A burn before the token's first trade has no price and adds
+   * nothing. NULL when nothing could be valued.
+   */
+  burned_usd: string | null;
 };
 
 /** What the platform has done so far, every figure counted from confirmed events. */
@@ -1730,10 +1895,30 @@ export async function platformStats(db: Db): Promise<PlatformStatsRow> {
     `SELECT l.stock, st.symbol, count(*)::int AS launches FROM launches l JOIN stocks st ON st.address = l.stock
      GROUP BY l.stock, st.symbol ORDER BY launches DESC`,
   );
-  const [scalars, volume, fees, launches] = await Promise.all([headRow, volumeRows, feeRows, launchRows]);
+  const burnRow = db.query<{ burns: number; burners: number; tokens_burned: number; burned_usd: string | null }>(
+    `SELECT count(*)::int AS burns, count(DISTINCT t.from_address)::int AS burners,
+            count(DISTINCT t.token)::int AS tokens_burned,
+            sum((t.amount_raw / 1e18) * pr.price_token_in_stock * (coalesce(qh.price_usd8, q.price_usd8) / 1e8))::text AS burned_usd
+     FROM transfers t
+     JOIN launches l ON l.token = t.token
+     LEFT JOIN stock_quotes q ON q.stock = l.stock
+     LEFT JOIN LATERAL (
+       SELECT s.price_token_in_stock FROM swaps s
+       WHERE s.token = t.token AND (s.block_number, s.log_index) <= (t.block_number, t.log_index)
+       ORDER BY s.block_number DESC, s.log_index DESC LIMIT 1
+     ) pr ON true
+     LEFT JOIN LATERAL (
+       SELECT h.price_usd8 FROM stock_quote_history h
+       WHERE h.stock = l.stock AND h.feed_updated_at <= t.block_time
+       ORDER BY h.feed_updated_at DESC LIMIT 1
+     ) qh ON true
+     WHERE ${IS_BURN}`,
+  );
+  const [scalars, volume, fees, launches, burned] = await Promise.all([headRow, volumeRows, feeRows, launchRows, burnRow]);
   const head = scalars[0];
   const trading = head;
   const holders = head;
+  const burn = burned[0];
   return {
     launches: head?.launches ?? 0,
     launches_24h: head?.launches_24h ?? 0,
@@ -1746,6 +1931,10 @@ export async function platformStats(db: Db): Promise<PlatformStatsRow> {
     volume_by_stock: volume,
     fees_by_stock: fees,
     launches_by_stock: launches,
+    burns: burn?.burns ?? 0,
+    burners: burn?.burners ?? 0,
+    tokens_burned: burn?.tokens_burned ?? 0,
+    burned_usd: burn?.burned_usd ?? null,
   };
 }
 

@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { useTheme } from '@/components/layout/theme-provider';
 import { Chip, Skeleton, cx } from '@/components/ui/primitives';
+import { usePendingTrades, withPendingCandles } from '@/lib/pending-trades';
 import { useCandles } from '@/lib/queries';
 import type { CandleView, SwapView } from '@/lib/types';
 
@@ -34,19 +35,24 @@ function cssVar(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
-/** Real 1-minute candles from the indexer, aggregated in the browser. No synthetic bars, ever. */
+/**
+ * Candles from the indexer at the chosen width, plus this browser's own trades read from their
+ * receipts until the indexer has them. No synthetic bars, ever.
+ */
 export function ChartModule({ token, poolId, stockSymbol, creatorSwaps = [] }: { token: string; poolId: string; stockSymbol: string; creatorSwaps?: SwapView[] }) {
   const [source, setSource] = useState<ChartSource>('native');
   const { resolved: theme } = useTheme();
   const [tf, setTf] = useState<Timeframe>(5);
   const [unit, setUnit] = useState<'usd' | 'stock'>('usd');
   const [style, setStyle] = useState<ChartStyle>('candles');
-  const { data, isLoading, isError } = useCandles(token, tf);
+  const { data, dataUpdatedAt, isLoading, isError } = useCandles(token, tf);
+  const pending = usePendingTrades(token);
   const stockUsd = data?.quote.usd ?? null;
   const effectiveUnit = unit === 'usd' && stockUsd ? 'usd' : 'stock';
 
   const series = useMemo(() => {
-    const raw = data?.candles ?? [];
+    // This browser's own trade moves the last bar from its receipt, before the indexer has it.
+    const raw = withPendingCandles(data?.candles ?? [], pending, tf, dataUpdatedAt);
     // Price every minute with the quote that was live for it, then aggregate. Converting after
     // aggregation would put one flat multiplier across the whole history, so a move in the stock
     // would silently redraw candles that had already settled; and an hourly bar's high and low have
@@ -66,7 +72,7 @@ export function ChartModule({ token, poolId, stockSymbol, creatorSwaps = [] }: {
       close: c.close,
       volume: c.volumeStock,
     }));
-  }, [data, tf, effectiveUnit, stockUsd]);
+  }, [data, dataUpdatedAt, pending, tf, effectiveUnit, stockUsd]);
 
   return (
     <div className="flex flex-col">

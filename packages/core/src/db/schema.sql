@@ -127,6 +127,9 @@ CREATE TABLE IF NOT EXISTS transfers (
 );
 CREATE INDEX IF NOT EXISTS transfers_token_idx ON transfers (token, block_number);
 CREATE INDEX IF NOT EXISTS transfers_block_idx ON transfers (block_number);
+-- Burns are transfers to 0x…dEaD: a handful among every transfer, read by every market row, the
+-- activity feed and the platform totals. The predicate is the literal the queries use (BURN_ADDRESS).
+CREATE INDEX IF NOT EXISTS transfers_burn_idx ON transfers (token, block_number DESC, log_index DESC) WHERE to_address = '0x000000000000000000000000000000000000dead';
 
 -- Current balances per holder, derived from transfers.
 CREATE TABLE IF NOT EXISTS balances (

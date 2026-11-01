@@ -13,7 +13,14 @@ import {
   decodeSwap,
   decodeTransfer,
   e30ToDecimalString,
+  CONTRACT_URI_CHANGED_TOPIC,
+  CREATOR_BOUGHT_TOPIC,
   ERC20_TRANSFER_TOPIC,
+  FEE_CHARGED_TOPIC,
+  FEES_CLAIMED_TOPIC,
+  LAUNCHED_TOPIC,
+  METADATA_EDITABLE_TOPIC,
+  METADATA_LOCKED_TOPIC,
   openingPriceUsd,
   stockPerTokenE30,
   SUPPLY_RAW,
@@ -59,6 +66,7 @@ import {
 } from '@stockpair/core/db';
 
 import type { ChainReader } from './chain-reader';
+import type { HeadClock } from './head-clock';
 
 type Logger = (message: string, fields?: Record<string, unknown>) => void;
 
@@ -71,13 +79,17 @@ export type SyncOptions = Readonly<{
   maxRange: number;
   /** Deepest reorg the indexer will walk back looking for a common ancestor. */
   maxReorgDepth?: number;
+  /** Estimates the head from blocks already read, in place of eth_blockNumber each pass. */
+  clock?: HeadClock;
   log?: Logger;
 }>;
 
+/** Every result carries the chain head the pass read or estimated, so the caller does not ask for it again. */
 export type SyncResult =
-  | { status: 'idle'; nextBlock: bigint; safeBlock: bigint }
+  | { status: 'idle'; head: bigint; nextBlock: bigint; safeBlock: bigint }
   | {
       status: 'progressed';
+      head: bigint;
       fromBlock: bigint;
       toBlock: bigint;
       launches: number;
@@ -91,7 +103,32 @@ export type SyncResult =
        */
       deploymentsBehind: readonly string[];
     }
-  | { status: 'reorg'; rolledBackTo: bigint };
+  | { status: 'reorg'; head: bigint; rolledBackTo: bigint };
+
+type BlockHeader = Awaited<ReturnType<ChainReader['getBlock']>>;
+
+/**
+ * Up to this many blocks, the main pass reads every log it needs in one request instead of three.
+ * Near the head that is every pass; a catch-up over thousands of blocks keeps the narrow requests,
+ * because the one wide request returns every Uniswap v4 swap on Base and would outgrow a response.
+ */
+export const MERGED_LOG_RANGE = 16n;
+
+/**
+ * Every event the indexer decodes, and nothing else. The merged request filters on these, so an
+ * event added to a decoder has to be added here too (a test holds the two together).
+ */
+export const INDEXED_TOPICS: readonly Hex[] = [
+  LAUNCHED_TOPIC,
+  CREATOR_BOUGHT_TOPIC,
+  METADATA_EDITABLE_TOPIC,
+  CONTRACT_URI_CHANGED_TOPIC,
+  METADATA_LOCKED_TOPIC,
+  FEE_CHARGED_TOPIC,
+  FEES_CLAIMED_TOPIC,
+  UNISWAP_V4_SWAP_TOPIC,
+  ERC20_TRANSFER_TOPIC,
+];
 
 type PoolInfo = {
   token: Address;
@@ -259,51 +296,99 @@ function firstDeployBlock(deployments: readonly StockPairDeployment[]): bigint {
 
 /** One bounded synchronisation step. Safe to call repeatedly; never processes unconfirmed blocks. */
 export async function syncOnce(options: SyncOptions): Promise<SyncResult> {
-  const { db, chain, deployments } = options;
+  const { db, chain, deployments, clock } = options;
   const log = options.log ?? (() => undefined);
   const floor = firstDeployBlock(deployments);
-  const head = await chain.getBlockNumber();
-  const safe = head - BigInt(options.confirmations);
-
-  const cursor = await readCursor(db);
+  const confirmations = BigInt(options.confirmations);
+  // The database is a long round trip from the indexer, so every read that does not depend on
+  // another goes out together: a pass is mostly waiting, and a trade is not on the page until the
+  // pass that holds it commits. With a clock the head needs no request at all once a block has
+  // been seen; eth_blockNumber was a tenth of what a pass cost.
+  const estimate = clock?.estimate() ?? null;
+  const [readHead, cursor] = await Promise.all([estimate ?? chain.getBlockNumber(), readCursor(db)]);
+  let head = readHead;
+  let safe = head - confirmations;
   const next = cursor ? BigInt(cursor.next_block) : floor;
+  const progressing = next <= safe;
+  // Read while the block reads are on their way; the pass needs the pools before its logs.
+  const pools = progressing ? loadPools(db) : null;
+  const lastHash = cursor?.last_block_hash && next > floor ? cursor.last_block_hash.toLowerCase() : null;
+  const idle = (): SyncResult => ({ status: 'idle', head, nextBlock: next, safeBlock: safe });
+  const rangeEnd = () => (next + BigInt(options.maxRange - 1) < safe ? next + BigInt(options.maxRange - 1) : safe);
 
-  // Reorg check: the last processed block must still be canonical.
-  if (cursor?.last_block_hash && next > floor) {
-    const lastNumber = next - 1n;
-    const onchain = await chain.getBlock(lastNumber);
-    if (onchain.hash.toLowerCase() !== cursor.last_block_hash.toLowerCase()) {
-      const ancestor = await findCommonAncestor(db, chain, lastNumber, options.maxReorgDepth ?? 200, floor);
-      if (ancestor === null) {
-        // We could not find where the chains diverge within the search depth. Rolling back on a
-        // guess would delete far more than the reorg touched, so stop instead and let a human look.
-        log('reorg depth exhausted', { lastNumber: lastNumber.toString(), maxDepth: options.maxReorgDepth ?? 200 });
-        return { status: 'idle', nextBlock: next, safeBlock: safe };
-      }
-      const rollbackTo = ancestor + 1n;
-      log('reorg detected', { lastNumber: lastNumber.toString(), rollbackTo: rollbackTo.toString() });
-      // Read the hash before touching anything, then undo and re-point the cursor together. Doing
-      // the rollback, an RPC call and the cursor write as three steps leaves the cursor past rows
-      // that no longer exist if the middle one fails, and a hole that is never re-read.
-      const ancestorHash = ancestor >= floor ? (await chain.getBlock(ancestor)).hash : null;
-      await db.transaction(async (tx) => {
-        await rollbackFrom(tx, rollbackTo);
-        await writeCursor(tx, rollbackTo, ancestorHash);
-      });
-      return { status: 'reorg', rolledBackTo: rollbackTo };
+  /** The last processed block is no longer canonical: walk back to where the chains agree and undo the rest. */
+  const rollBack = async (lastNumber: bigint): Promise<SyncResult> => {
+    // The pools read is not used on this path; settle it so a failure there is not unhandled.
+    void pools?.catch(() => undefined);
+    const ancestor = await findCommonAncestor(db, chain, lastNumber, options.maxReorgDepth ?? 200, floor);
+    if (ancestor === null) {
+      // We could not find where the chains diverge within the search depth. Rolling back on a
+      // guess would delete far more than the reorg touched, so stop instead and let a human look.
+      log('reorg depth exhausted', { lastNumber: lastNumber.toString(), maxDepth: options.maxReorgDepth ?? 200 });
+      return idle();
     }
+    const rollbackTo = ancestor + 1n;
+    log('reorg detected', { lastNumber: lastNumber.toString(), rollbackTo: rollbackTo.toString() });
+    // Read the hash before touching anything, then undo and re-point the cursor together. Doing
+    // the rollback, an RPC call and the cursor write as three steps leaves the cursor past rows
+    // that no longer exist if the middle one fails, and a hole that is never re-read.
+    const ancestorHash = ancestor >= floor ? (await chain.getBlock(ancestor)).hash : null;
+    await db.transaction(async (tx) => {
+      await rollbackFrom(tx, rollbackTo);
+      await writeCursor(tx, rollbackTo, ancestorHash);
+    });
+    return { status: 'reorg', head, rolledBackTo: rollbackTo };
+  };
+
+  if (!progressing || !pools) {
+    // Reorg check while waiting: the last processed block must still be canonical.
+    if (lastHash !== null) {
+      const last = await chain.getBlock(next - 1n);
+      clock?.observe(last);
+      if (last.hash.toLowerCase() !== lastHash) return rollBack(next - 1n);
+    }
+    return idle();
   }
 
-  if (next > safe) return { status: 'idle', nextBlock: next, safeBlock: safe };
-  const to = next + BigInt(options.maxRange - 1) < safe ? next + BigInt(options.maxRange - 1) : safe;
+  // The range's first and last blocks, read together before any log. The reorg check asks the
+  // first for its parent's hash, which is the last processed block's; the cursor needs the last
+  // one's hash; a one-block range reads one block for both. An estimated head is trusted only once
+  // the node has the blocks it points at.
+  let to = rangeEnd();
+  const needFirst = () => lastHash !== null && to !== next;
+  const read = (n: bigint) => (estimate === null ? chain.getBlock(n) : chain.findBlock(n));
+  let [last, first] = await Promise.all([read(to), needFirst() ? read(next) : null]);
+  if (last === null || (needFirst() && first === null)) {
+    // The node does not have the block the clock points at: a stalled sequencer, or a clock ahead
+    // of the chain. Ask the node where its head is.
+    head = await chain.getBlockNumber();
+    safe = head - confirmations;
+    if (next > safe) {
+      void pools.catch(() => undefined);
+      return idle();
+    }
+    to = rangeEnd();
+    [last, first] = await Promise.all([chain.getBlock(to), needFirst() ? chain.getBlock(next) : null]);
+  }
+  if (to === next) first = last;
+  clock?.observe(last);
+  if (lastHash !== null && first !== null && first.parentHash.toLowerCase() !== lastHash) return rollBack(next - 1n);
 
   const counts = await indexRange(db, chain, log, next, to, {
     deployments,
-    pools: await loadPools(db),
+    pools,
     alerts: true,
     cursor: true,
+    blocks: first !== null && first !== last ? [first, last] : [last],
   });
-  return { status: 'progressed', fromBlock: next, toBlock: to, ...counts };
+  return { status: 'progressed', head, fromBlock: next, toBlock: to, ...counts };
+}
+
+/** The first block the next pass reads, as this one left the cursor. */
+export function nextBlockAfter(result: SyncResult): bigint {
+  if (result.status === 'progressed') return result.toBlock + 1n;
+  if (result.status === 'reorg') return result.rolledBackTo;
+  return result.nextBlock;
 }
 
 /** A pass that found new launches or a new contract URI leaves profiles to fetch. */
@@ -546,12 +631,14 @@ async function catchUpDeployment(
 type RangeScope = Readonly<{
   /** Deployments whose factory and hook logs this pass reads. */
   deployments: readonly StockPairDeployment[];
-  /** Pools whose swaps and tokens this pass reads; launches it finds are added. */
-  pools: Map<string, PoolInfo>;
+  /** Pools whose swaps and tokens this pass reads; launches it finds are added. A pending read is awaited alongside the first logs. */
+  pools: Map<string, PoolInfo> | Promise<Map<string, PoolInfo>>;
   /** Queue alerts. Off for a catch-up pass: the channel announces what happens, not history. */
   alerts: boolean;
   /** Move the main cursor. Only the main pass owns it. */
   cursor: boolean;
+  /** Blocks of the range already read (the reorg check's), so they are not read again. */
+  blocks?: readonly BlockHeader[];
 }>;
 
 type RangeCounts = {
@@ -578,14 +665,29 @@ async function indexRange(
 ): Promise<RangeCounts> {
   const factories = new Map(scope.deployments.map((d) => [d.factory.toLowerCase(), d]));
   const hooks = new Set(scope.deployments.map((d) => d.hook.toLowerCase()));
-  const pools = scope.pools;
+  const contractAddresses = [...new Set(scope.deployments.flatMap((d) => [d.factory, d.hook]))];
 
-  // 1. Factory + hook events.
-  const contractLogs = await chain.getLogs({
-    address: [...new Set(scope.deployments.flatMap((d) => [d.factory, d.hook]))],
-    fromBlock: from,
-    toBlock: to,
-  });
+  // 1. Factory + hook events. Near the head, one request also brings the swaps and transfers
+  //    (step 2 sorts them out); otherwise it runs while the known pools are still being read.
+  const merged = scope.cursor && to - from < MERGED_LOG_RANGE;
+  let pools: Map<string, PoolInfo>;
+  let contractLogs: RawLog[];
+  let mergedLogs: RawLog[] | null = null;
+  if (merged) {
+    pools = await scope.pools;
+    const knownTokens = [...new Set([...pools.values()].map((p) => p.token.toLowerCase()))] as Address[];
+    mergedLogs = await chain.getLogs({
+      address: [...contractAddresses, BASE_CONTRACTS.poolManager, ...knownTokens],
+      topics: [[...INDEXED_TOPICS]],
+      fromBlock: from,
+      toBlock: to,
+    });
+    const contracts = new Set(contractAddresses.map((a) => a.toLowerCase()));
+    contractLogs = mergedLogs.filter((l) => contracts.has(l.address.toLowerCase()));
+  } else {
+    [pools, contractLogs] = await Promise.all([scope.pools, chain.getLogs({ address: contractAddresses, fromBlock: from, toBlock: to })]);
+  }
+  const tokensBefore = new Set([...pools.values()].map((p) => p.token.toLowerCase()));
   const launchedLogs: { log: RawLog; event: LaunchedEvent; deployment: StockPairDeployment }[] = [];
   const creatorBuys = new Map<string, CreatorBoughtEvent>();
   const editable = new Set<string>();
@@ -636,34 +738,61 @@ async function indexRange(
   // 2. Swaps on known pools and transfers of launched tokens.
   const poolIds = [...pools.keys()] as Hex[];
   const tokens = [...new Set([...pools.values()].map((p) => p.token.toLowerCase()))] as Address[];
-  const swapLogs = poolIds.length
-    ? await chain.getLogs({
-        address: BASE_CONTRACTS.poolManager,
-        topics: [UNISWAP_V4_SWAP_TOPIC, poolIds],
-        fromBlock: from,
-        toBlock: to,
-      })
-    : [];
-  const transferLogs = tokens.length
-    ? await chain.getLogs({ address: tokens, topics: [ERC20_TRANSFER_TOPIC], fromBlock: from, toBlock: to })
-    : [];
+  let swapLogs: RawLog[];
+  let transferLogs: RawLog[];
+  if (mergedLogs) {
+    // The merged request had every v4 swap on Base in the range and the transfers of the tokens
+    // known before it. Keep this launchpad's pools, launches from this range included; the only
+    // thing it could not ask for is the transfers of a token launched in the range itself.
+    const poolManager = BASE_CONTRACTS.poolManager.toLowerCase();
+    const topicIs = (l: RawLog, topic: Hex) => l.topics[0]?.toLowerCase() === topic.toLowerCase();
+    swapLogs = mergedLogs.filter(
+      (l) => l.address.toLowerCase() === poolManager && topicIs(l, UNISWAP_V4_SWAP_TOPIC) && l.topics[1] !== undefined && pools.has(l.topics[1].toLowerCase()),
+    );
+    transferLogs = mergedLogs.filter((l) => topicIs(l, ERC20_TRANSFER_TOPIC) && tokensBefore.has(l.address.toLowerCase()));
+    const launchedHere = tokens.filter((t) => !tokensBefore.has(t));
+    if (launchedHere.length > 0) {
+      transferLogs.push(...(await chain.getLogs({ address: launchedHere, topics: [ERC20_TRANSFER_TOPIC], fromBlock: from, toBlock: to })));
+      transferLogs.sort((a, b) => Number((a.blockNumber ?? 0n) - (b.blockNumber ?? 0n)) || (a.logIndex ?? 0) - (b.logIndex ?? 0));
+    }
+  } else {
+    [swapLogs, transferLogs] = await Promise.all([
+      poolIds.length
+        ? chain.getLogs({
+            address: BASE_CONTRACTS.poolManager,
+            topics: [UNISWAP_V4_SWAP_TOPIC, poolIds],
+            fromBlock: from,
+            toBlock: to,
+          })
+        : [],
+      tokens.length
+        ? chain.getLogs({ address: tokens, topics: [ERC20_TRANSFER_TOPIC], fromBlock: from, toBlock: to })
+        : [],
+    ]);
+  }
 
   // 3. Blocks referenced by any log, plus the range end for the cursor hash.
   const blockNumbers = new Set<bigint>(scope.cursor ? [to] : []);
   for (const l of [...contractLogs, ...swapLogs, ...transferLogs]) {
     if (l.blockNumber !== null) blockNumbers.add(l.blockNumber);
   }
-  const blocks = new Map<bigint, { number: bigint; hash: Hex; parentHash: Hex; timestamp: bigint }>();
-  for (const block of await inFlight([...blockNumbers], (number) => chain.getBlock(number))) {
-    blocks.set(block.number, block);
+  // 4. Swap senders. A block that holds a swap is read with its transactions, which name every
+  //    swap's sender: one request per block instead of one per transaction. The other blocks the
+  //    pass does not have yet are read alongside, without them.
+  const blocks = new Map<bigint, BlockHeader>((scope.blocks ?? []).map((b) => [b.number, b]));
+  const swapBlocks = new Set(swapLogs.map((l) => l.blockNumber).filter((n): n is bigint => n !== null));
+  const swapTxHashes = new Set(swapLogs.map((l) => l.transactionHash?.toLowerCase()).filter((h): h is Hex => h !== undefined));
+  const [blockResults, swapBlockResults] = await Promise.all([
+    inFlight([...blockNumbers].filter((n) => !blocks.has(n) && !swapBlocks.has(n)), (number) => chain.getBlock(number)),
+    inFlight([...swapBlocks], (number) => chain.getBlockWithSenders(number)),
+  ]);
+  for (const block of blockResults) blocks.set(block.number, block);
+  const senders = new Map<Hex, Address>();
+  for (const result of swapBlockResults) {
+    blocks.set(result.block.number, result.block);
+    for (const [hash, sender] of result.senders) if (swapTxHashes.has(hash)) senders.set(hash, sender);
   }
   const blockTime = (number: bigint) => new Date(Number(blocks.get(number)!.timestamp) * 1000);
-
-  // 4. Transaction senders for swaps.
-  const swapTxHashes = [...new Set(swapLogs.map((l) => l.transactionHash).filter((h): h is Hex => h !== null))];
-  const senders = new Map<Hex, Address | null>();
-  const senderResults = await inFlight(swapTxHashes, (hash) => chain.getTransactionSender(hash));
-  swapTxHashes.forEach((hash, i) => senders.set(hash, senderResults[i] ?? null));
 
   // 5. Everything the range holds, decoded into rows first so each table is written in one
   //    statement. A busy range carries thousands of rows and a round trip per row is what the
@@ -728,7 +857,7 @@ async function indexRange(
       poolId: swap.poolId,
       side,
       sender: swap.sender,
-      trader: launchBuy ? bought.creator : (senders.get(raw.transactionHash) ?? null),
+      trader: launchBuy ? bought.creator : (senders.get(raw.transactionHash.toLowerCase() as Hex) ?? null),
       amountTokenRaw,
       amountStockRaw,
       priceTokenInStock: e30ToDecimalString(priceE30),

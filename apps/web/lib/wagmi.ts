@@ -59,7 +59,6 @@ let cached: ReturnType<typeof createConfig> | null = null;
 
 export function getWagmiConfig() {
   if (cached) return cached;
-  const alchemyRpc = publicEnv.alchemyKey ? `https://base-mainnet.g.alchemy.com/v2/${publicEnv.alchemyKey}` : null;
   // Base Account (passkey, works on mobile web), any injected extension, and — when a WalletConnect
   // project id is set — QR / deep-link into a mobile wallet like MetaMask, Trust or Rainbow.
   const connectors: CreateConnectorFn[] = [baseAccount({ appName: 'BStocks Launchpad' }), injected()];
@@ -83,10 +82,14 @@ export function getWagmiConfig() {
     multiInjectedProviderDiscovery: true,
     ssr: true,
     storage: createStorage({ key: WAGMI_STORAGE_KEY, storage: walletStorage() }),
+    // Keyless endpoints only. A key in this bundle is a key every visitor can read and spend: the
+    // browser reads balances, allowances, receipts and the latest block, all at the head, which
+    // these serve, and each visitor's own IP carries its own rate limit. Signing goes through the
+    // wallet, never through these.
     transports: {
       [base.id]: fallback([
-        ...(alchemyRpc ? [http(alchemyRpc, { batch: true, retryCount: 2, timeout: 8_000 })] : []),
         http('https://base-rpc.publicnode.com', { batch: true, retryCount: 2, timeout: 8_000 }),
+        http('https://base.drpc.org', { batch: true, retryCount: 1, timeout: 8_000 }),
         http('https://mainnet.base.org', { batch: true, retryCount: 1, timeout: 8_000 }),
       ]),
     },

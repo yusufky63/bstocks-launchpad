@@ -98,9 +98,11 @@ describe('migrate', () => {
     expect(row!.metadata_fetched_at).not.toBeNull();
     const version = await db.query<{ version: string }>('SELECT max(version)::text AS version FROM schema_version');
     expect(Number(version[0]!.version)).toBe(SCHEMA_VERSION);
-    expect(SCHEMA_VERSION).toBe(8);
+    expect(SCHEMA_VERSION).toBe(9);
     const tables = await db.query<{ tablename: string }>("SELECT tablename FROM pg_tables WHERE schemaname = 'public'");
     expect(tables.map((t) => t.tablename)).toEqual(expect.arrayContaining(['metadata_updates', 'indexed_deployments']));
+    // Version 9 only adds the partial index the burn reads use.
+    expect(await indexNames(db)).toContain('transfers_burn_idx');
     await db.close();
   });
 

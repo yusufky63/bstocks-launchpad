@@ -10,7 +10,7 @@ export const maxDuration = 15;
 
 const querySchema = z.object({ limit: limitSchema, token: z.string().optional(), actor: z.string().optional() });
 
-/** Launches and swaps as one feed, newest first. */
+/** Launches, swaps and burns as one feed, newest first. */
 export async function GET(request: Request): Promise<Response> {
   const parsed = querySchema.safeParse(Object.fromEntries(new URL(request.url).searchParams));
   if (!parsed.success) return error(400, 'INVALID_QUERY', 'Unsupported query parameters.');

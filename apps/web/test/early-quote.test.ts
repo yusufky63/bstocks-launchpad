@@ -29,8 +29,10 @@ vi.mock('@/lib/chain.server', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/chain.server')>()),
   serverDeployments: () => [mocks.deployment],
   getPublicClient: () => ({ readContract: mocks.readContract, simulateContract: mocks.simulateContract }),
+  getLightClient: () => ({ readContract: mocks.readContract, simulateContract: mocks.simulateContract }),
 }));
 
+import { invalidate } from '@/lib/cache.server';
 import { poolIdFor, poolKeyFor, quoteExactIn } from '@/lib/quote.server';
 
 const token = '0xb2000000000000000000000000000000000000aa' as Address;
@@ -39,6 +41,7 @@ const key = poolKeyFor(token, stock, mocks.deployment.hook as Address);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  invalidate();
   mocks.readMarket.mockResolvedValue(null);
   mocks.readLaunch.mockResolvedValue({
     token, stock, factory: mocks.deployment.factory, hook: mocks.deployment.hook,

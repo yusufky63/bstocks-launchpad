@@ -136,7 +136,8 @@ describe('the answer as the browser keeps it', () => {
 
   it('sends the header only after the visitor answered, for 30 days', () => {
     vi.stubGlobal('window', fakeWindow);
-    const now = Date.UTC(2026, 8, 30);
+    // eligibilityHeaders reads the real clock, so the answer has to be given at the real time too.
+    const now = Date.now();
     storeAttestation(false, now);
     expect(eligibilityHeaders()).toEqual({});
     storeAttestation(true, now);

@@ -13,6 +13,29 @@ at the same `DATABASE_URL` the web app reads.
 | A small VPS with systemd or pm2 | Cheapest; `pnpm --filter @stockpair/indexer exec tsx src/main.ts` under a restart policy. |
 | Vercel | **Not suitable.** Vercel runs request-scoped functions; there is no place for a loop that must stay alive. Keep the web app on Vercel and the indexer elsewhere. |
 
+Run it in the region closest to the database. A pass that holds a trade makes about fifteen
+database round trips one after another (the writes share one transaction), so the round trip time
+decides how long a trade takes to reach the page. The production database is in Sydney
+(`ap-southeast-2`): from Railway's Netherlands region a round trip is roughly 280 ms, and in October
+2026 a pass with nothing to write took 3.7 s. Railway has no Sydney region; Singapore
+(`asia-southeast1`) is the nearest, at roughly 90 ms.
+
+RPC usage is per pass, not per event, so the poll interval sets the bill. Near the head a pass makes
+one `eth_getBlock` for its first block (the reorg check, which also serves a one-block range's
+cursor hash), one more for its last block when the range is longer, and a single `eth_getLogs`
+filtered to the events the indexer decodes; a launch inside the range adds one request for the new
+token's transfers. A block that holds one of our trades is read once with its transactions, which
+name every trade's sender, instead of one `eth_getTransactionByHash` per trade. The head is not
+asked for: Base makes a block every two seconds, so it is counted from the newest block a pass has
+read (`src/head-clock.ts`). Only the first pass, and a pass whose last block the node does not have
+yet (a stalled sequencer), sends `eth_blockNumber`.
+
+At Alchemy's published prices (20 CU a block, 60 a log request) that is about 100 CU per ten-second
+pass, roughly 26M CU a month, plus under 2M for the stock quotes, which are one Multicall3
+`eth_call` a minute. The four-second pass with `eth_blockNumber` came to about 70M, and the earlier
+two-second pass with three log requests to about 170M. `INDEXER_POLL_MS=4000` shows other people's
+trades six seconds sooner for about 2.5x the usage.
+
 ## Environment
 
 Copy `apps/indexer/.env` (same keys as the local file):
@@ -23,7 +46,7 @@ BASE_RPC_URL=https://…             # dedicated RPC (Alchemy/QuickNode); public
 BASE_RPC_URL_FALLBACK=https://…
 STOCKPAIR_DEPLOYMENTS=[{"factory":"0x…","hook":"0x…","router":"0x…","deployBlock":…}]
 INDEXER_CONFIRMATIONS=3
-INDEXER_POLL_MS=2000
+INDEXER_POLL_MS=10000
 IPFS_GATEWAY=https://gateway.pinata.cloud
 INDEXER_HEALTH_PORT=8788
 ```

@@ -151,7 +151,7 @@ and `apps/indexer/Dockerfile`.
 
 
 ```bash
-pnpm dev:indexer        # polls Base every 2 s, health at http://127.0.0.1:8788/health
+pnpm dev:indexer        # polls Base every 10 s, health at http://127.0.0.1:8788/health
 pnpm dev                # http://localhost:3000
 ```
 
@@ -168,10 +168,10 @@ database round trip per window.
 - `GET /api/markets?stock=&q=&creator=&limit=&offset=`
 - `GET /api/stocks` (with official icons from each token's onchain metadata)
 - `GET /api/stats` (platform totals, fees and volume per stock)
-- `GET /api/activity?limit=&token=&actor=` (launches and swaps feed, creator trades flagged)
+- `GET /api/activity?limit=&token=&actor=` (launches, swaps and burns feed, creator trades flagged)
 - `GET /api/tokens/:address` (falls back to a direct factory read while the indexer catches up; includes
   `launch.creatorBuy` and `profile.onchain`)
-- `GET /api/tokens/:address/swaps|candles|holders`
+- `GET /api/tokens/:address/swaps|candles|holders|burns`
 - `GET /api/tokens/:address/dex-paid` (DEX Screener paid-order status: approved, pending, none or unavailable; cached for 5 minutes)
 - `GET /api/wallet/:address` (created, holdings, earnings, claimable, recent trades)
 - `POST /api/quote` `{ token, side: buy|sell, amountIn }` -> Uniswap v4 Quoter result incl. hook fee
@@ -189,7 +189,7 @@ database round trip per window.
   carries the same answer as a header
 
 Listed partner origins (`PARTNER_ORIGINS`, zkCodex by default) may read launch-config, stocks, markets, activity,
-region, health, one token with its trades, candles and holders, and a wallet, and post metadata, quotes and the
+region, health, one token with its trades, candles, holders and burns, and a wallet, and post metadata, quotes and the
 transaction builders, from the visitor's browser. Everything else stays same-origin. Quotes, transaction builds,
 token reads and wallet reads carry a per-caller limit a minute (`API_LIMITS` in `apps/web/lib/rate-limit.server.ts`).
 

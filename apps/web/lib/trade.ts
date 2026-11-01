@@ -1,4 +1,4 @@
-import { encodeFunctionData, erc20Abi, type Address, type Hash, type Hex, type PublicClient, type WalletClient } from 'viem';
+import { encodeFunctionData, erc20Abi, type Address, type Hash, type Hex, type PublicClient, type TransactionReceipt, type WalletClient } from 'viem';
 import { base } from 'viem/chains';
 
 import { stockPairRouterAbi } from '@stockpair/core';
@@ -81,6 +81,8 @@ export interface SwapHooks {
   onApproval?: (hash: Hash) => void;
   onMode?: (mode: 'batched' | 'sequential') => void;
   onSubmitted?: (hash: Hash | undefined) => void;
+  /** The swap's successful receipt, before CONFIRMED is reported. */
+  onReceipt?: (receipt: TransactionReceipt) => void;
 }
 
 export interface SwapResult {
@@ -162,6 +164,7 @@ export async function executeSwap(
     hooks.onState?.('CONFIRMING');
     const receipt = await publicClient.waitForTransactionReceipt({ hash });
     if (receipt.status !== 'success') throw new Error('The swap reverted onchain.');
+    hooks.onReceipt?.(receipt);
     hooks.onState?.('CONFIRMED');
     return { txHash: hash, mode: 'batched' };
   }
@@ -186,6 +189,7 @@ export async function executeSwap(
   hooks.onState?.('CONFIRMING');
   const receipt = await publicClient.waitForTransactionReceipt({ hash });
   if (receipt.status !== 'success') throw new Error('The swap reverted onchain.');
+  hooks.onReceipt?.(receipt);
   hooks.onState?.('CONFIRMED');
   return { txHash: hash, mode: 'sequential' };
 }

@@ -1,7 +1,7 @@
 import { readCursor, SCHEMA_VERSION } from '@stockpair/core/db';
 
 import { json } from '@/lib/api.server';
-import { getPublicClient, serverDeployments } from '@/lib/chain.server';
+import { getLightClient, serverDeployments } from '@/lib/chain.server';
 import { getDb } from '@/lib/db.server';
 import { appliedSchema, unknownLaunchHooks } from '@/lib/health.server';
 
@@ -26,7 +26,8 @@ export async function GET(): Promise<Response> {
   }
   let head: string | null = null;
   try {
-    head = (await getPublicClient().getBlockNumber()).toString();
+    // Only for the lag readout; any endpoint near the head will do.
+    head = (await getLightClient().getBlockNumber()).toString();
   } catch {
     head = null;
   }

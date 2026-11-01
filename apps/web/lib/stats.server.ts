@@ -78,6 +78,7 @@ export async function readStats(db: Db): Promise<StatsResponse | null> {
       feesByStock,
       launchesByStock: raw.launches_by_stock,
       topCreators,
+      burns: { count: raw.burns, burners: raw.burners, tokens: raw.tokens_burned, valueUsd: raw.burned_usd === null ? null : Number(raw.burned_usd) },
       asOf: new Date().toISOString(),
     };
     }),

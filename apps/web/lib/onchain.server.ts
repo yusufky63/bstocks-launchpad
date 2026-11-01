@@ -4,7 +4,7 @@ import { parseAbi, type Address } from 'viem';
 
 import { BASE_STOCKS, stockPairFactoryAbi, stockPairHookAbi } from '@stockpair/core';
 
-import { getPublicClient, serverDeployments } from './chain.server';
+import { getLightClient, getPublicClient, serverDeployments } from './chain.server';
 import { distinctHooks } from './deployments';
 
 const erc20Abi = parseAbi([
@@ -112,7 +112,8 @@ export function sortClaimableResults(
 export async function readClaimable(account: Address): Promise<ClaimableRead | null> {
   const hooks = distinctHooks(serverDeployments());
   if (hooks.length === 0) return null;
-  const client = getPublicClient();
+  // Shown on the wallet page; the claim itself is simulated and sent from the wallet.
+  const client = getLightClient();
   const pairs = hooks.flatMap((hook) => BASE_STOCKS.map((stock) => ({ hook, stock })));
   const results = await client.multicall({
     contracts: pairs.map(({ hook, stock }) => ({

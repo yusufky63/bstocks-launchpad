@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { listSwaps, readMarket } from '@stockpair/core/db';
 
 import { error, json, limitSchema, parseAddressParam, serializable } from '@/lib/api.server';
+import { cached, TTL } from '@/lib/cache.server';
 import { getDb } from '@/lib/db.server';
 import { limitCaller } from '@/lib/rate-limit.server';
 
@@ -25,15 +26,24 @@ export async function GET(request: Request, { params }: Context): Promise<Respon
   const parsed = querySchema.safeParse(Object.fromEntries(new URL(request.url).searchParams));
   if (!parsed.success) return error(400, 'INVALID_QUERY', 'Unsupported query parameters.');
 
-  const db = await getDb();
-  const market = await readMarket(db, token);
-  if (!market) return error(404, 'TOKEN_NOT_FOUND', 'No token was launched at this address.');
-  const rows = await listSwaps(db, {
-    token,
-    limit: parsed.data.limit,
-    ...(parsed.data.before !== undefined ? { beforeBlock: parsed.data.before } : {}),
-    ...(parsed.data.beforeLog !== undefined ? { beforeLogIndex: parsed.data.beforeLog } : {}),
-  });
+  const { limit, before, beforeLog } = parsed.data;
+  const read = async () => {
+    const db = await getDb();
+    const market = await readMarket(db, token);
+    if (!market) return null;
+    const rows = await listSwaps(db, {
+      token,
+      limit,
+      ...(before !== undefined ? { beforeBlock: before } : {}),
+      ...(beforeLog !== undefined ? { beforeLogIndex: beforeLog } : {}),
+    });
+    return { market, rows };
+  };
+  // The newest page is what every open token page polls every few seconds, so viewers of one token
+  // share a read for a second. Older pages are asked for once each and are not worth holding.
+  const found = before === undefined ? await cached(`swaps:${token}:${limit}`, TTL.live, read) : await read();
+  if (!found) return error(404, 'TOKEN_NOT_FOUND', 'No token was launched at this address.');
+  const { market, rows } = found;
   const stockUsd = market.stock_usd8 === null ? null : Number(market.stock_usd8) / 1e8;
   const stockUnit = 10 ** Number(market.stock_decimals);
   return json({

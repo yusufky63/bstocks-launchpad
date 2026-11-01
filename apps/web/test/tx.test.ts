@@ -33,11 +33,13 @@ vi.mock('@/lib/chain.server', async (importOriginal) => ({
   serverDeployments: () => [mocks.deployment],
   serverDeployment: () => mocks.deployment,
   getPublicClient: () => ({ readContract: mocks.readContract, simulateContract: mocks.simulateContract, call: mocks.call, getBlock: mocks.getBlock }),
+  getLightClient: () => ({ readContract: mocks.readContract, simulateContract: mocks.simulateContract, call: mocks.call, getBlock: mocks.getBlock }),
 }));
 
 import { POST as postLaunchTx } from '@/app/api/tx/launch/route';
 import { POST as postSwapTx } from '@/app/api/tx/swap/route';
 import { getBuilderDataSuffix, partnerDataSuffix } from '@/lib/attribution';
+import { invalidate } from '@/lib/cache.server';
 import { setDbForTests } from '@/lib/db.server';
 import { devBuyMinOut, quoteDevBuy, stockInForShare } from '@/lib/launch';
 import { poolKeyFor } from '@/lib/quote.server';
@@ -78,6 +80,7 @@ function strip(data: Hex, suffix: Hex | null = getBuilderDataSuffix()): Hex {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  invalidate();
   resetRateLimits();
   setDbForTests({} as Db);
   allowance = 0n;

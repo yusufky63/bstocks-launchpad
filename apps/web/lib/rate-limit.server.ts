@@ -53,9 +53,11 @@ export function resetRateLimits(): void {
 /**
  * Requests a minute one caller may make on the routes other apps build on. Generous next to what one
  * visitor's page sends (a quote every few seconds while typing, a token poll every few seconds), and
- * low enough that a client in a loop runs out long before the database or the RPC does.
+ * low enough that a client in a loop runs out long before the database or the RPC does. An open token
+ * page asks for its newest trades every 3 s and refetches its chart and figures after each new trade
+ * on a busy token, about 80 requests a minute, so `token` leaves room for a second tab or a shared IP.
  */
-export const API_LIMITS = { quote: 120, tx: 30, token: 120, wallet: 60 } as const;
+export const API_LIMITS = { quote: 120, tx: 30, token: 240, wallet: 60 } as const;
 
 /** A 429 for a caller over its limit on `scope`, or null to go on. */
 export function limitCaller(request: Request, scope: keyof typeof API_LIMITS, windowMs = 60_000): Response | null {
